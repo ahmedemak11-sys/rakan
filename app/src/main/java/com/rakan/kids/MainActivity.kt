@@ -445,7 +445,7 @@ class MainActivity : AppCompatActivity() {
             val t = tts ?: return
             runOnUiThread {
                 try {
-                    t.language = if (lang == "en") Locale.ENGLISH else Locale("ar")
+                    t.setLanguage(if (lang == "en") Locale.ENGLISH else Locale("ar"))
                     t.speak(text, TextToSpeech.QUEUE_FLUSH, null, "rakan")
                 } catch (e: Exception) { }
             }
