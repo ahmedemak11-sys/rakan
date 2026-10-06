@@ -38,10 +38,10 @@ import java.util.Locale
 /**
  * Rakan — a kid-safe launcher-style app.
  *
- * The interface lives in assets/app (HTML + CSS + JS) inside one WebView.
+ * The whole interface lives in assets/app (HTML + CSS + JS) inside one WebView.
  * Everything only Android can do — pinning the screen, reading the /Rakan folders,
- * permissions, storing parent settings — lives here and reaches the page through
- * the `Rakan` JavaScript object.
+ * permissions, speaking, storing parent settings — lives here and reaches the page
+ * through the `Rakan` JavaScript object.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -50,47 +50,46 @@ class MainActivity : AppCompatActivity() {
     private var pinned = false
 
     /**
-     * Set while the parent is being sent to a system settings screen.
-     * Lock task mode blocks starting other activities, so pinning is released first
-     * and restored when they come back.
+     * Set while the parent is being sent to a system screen. Lock task mode blocks
+     * starting other activities, so pinning is released first and restored on return.
      */
     private var leavingForSettings = false
+
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
 
     /** Where the parent drops content. Also what a Drive sync app should write into. */
     private val rootDir: File
         get() = File(Environment.getExternalStorageDirectory(), "Rakan")
 
-    private val videosDir: File get() = File(rootDir, "videos")
-    private val photosDir: File get() = File(rootDir, "photos")
-    private val soundsDir: File get() = File(rootDir, "sounds")
+    private val videosDir: File
+        get() = File(rootDir, "videos")
 
-    /** One tree per recorded voice, plus the shared Quran and app folders. */
-    private val soundFolders: List<String> =
-        listOf("mom", "dad").flatMap { v ->
-            listOf(
-                "sounds/$v/letters/ar", "sounds/$v/letters/en",
-                "sounds/$v/numbers", "sounds/$v/manners", "sounds/$v/prayer"
-            )
-        } + listOf("sounds/quran", "sounds/app")
+    private val photosDir: File
+        get() = File(rootDir, "photos")
 
-    private var tts: TextToSpeech? = null
-    private var ttsReady = false
+    private val soundsDir: File
+        get() = File(rootDir, "sounds")
 
     private val fileChooser = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         val cb = filePathCallback
         filePathCallback = null
-        if (cb == null) return@registerForActivityResult
-        val uri = result.data?.data
-        if (result.resultCode == RESULT_OK && uri != null) cb.onReceiveValue(arrayOf(uri))
-        else cb.onReceiveValue(null)
+        if (cb != null) {
+            val uri = result.data?.data
+            if (result.resultCode == RESULT_OK && uri != null) {
+                cb.onReceiveValue(arrayOf(uri))
+            } else {
+                cb.onReceiveValue(null)
+            }
+        }
     }
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
-        web.evaluateJavascript("window.onRakanPermissionResult && window.onRakanPermissionResult()", null)
+        notifyPage()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -104,27 +103,32 @@ class MainActivity : AppCompatActivity() {
         web = WebView(this)
         setContentView(web)
 
-        web.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            mediaPlaybackRequiresUserGesture = false
-            allowFileAccess = false
-            allowContentAccess = false
-            cacheMode = WebSettings.LOAD_NO_CACHE
-            textZoom = 100
-        }
+        val s = web.settings
+        s.javaScriptEnabled = true
+        s.domStorageEnabled = true
+        s.mediaPlaybackRequiresUserGesture = false
+        s.allowFileAccess = false
+        s.allowContentAccess = false
+        s.cacheMode = WebSettings.LOAD_NO_CACHE
+
         web.setBackgroundColor(ContextCompat.getColor(this, R.color.rakan_sky))
         web.isLongClickable = false
         web.setOnLongClickListener { true }
 
         web.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(
-                view: WebView, request: WebResourceRequest
-            ): WebResourceResponse? = serve(request.url)
+                view: WebView,
+                request: WebResourceRequest
+            ): WebResourceResponse? {
+                return serve(request.url)
+            }
 
             override fun shouldOverrideUrlLoading(
-                view: WebView, request: WebResourceRequest
-            ): Boolean = request.url.host != "rakan.local"
+                view: WebView,
+                request: WebResourceRequest
+            ): Boolean {
+                return request.url.host != "rakan.local"
+            }
         }
 
         web.webChromeClient = object : WebChromeClient() {
@@ -133,9 +137,9 @@ class MainActivity : AppCompatActivity() {
                 callback: ValueCallback<Array<Uri>>,
                 params: FileChooserParams
             ): Boolean {
-                filePathCallback?.onReceiveValue(null)
+                val old = filePathCallback
+                old?.onReceiveValue(null)
                 filePathCallback = callback
-                // The picker is another activity, so pinning has to come off first.
                 leavingForSettings = true
                 stopPinning()
                 return try {
@@ -152,20 +156,7 @@ class MainActivity : AppCompatActivity() {
         web.addJavascriptInterface(Bridge(), "Rakan")
         web.loadUrl("https://rakan.local/index.html")
 
-        // The built-in reader: letters, numbers and the guidance cards all speak
-        // without the parent having recorded anything yet.
-        tts = TextToSpeech(this) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                val t = tts ?: return@TextToSpeech
-                val arabic = try { t.setLanguage(Locale("ar")) } catch (e: Exception) { TextToSpeech.LANG_MISSING_DATA }
-                ttsReady = arabic != TextToSpeech.LANG_MISSING_DATA && arabic != TextToSpeech.LANG_NOT_SUPPORTED
-                t.setSpeechRate(0.85f)
-                t.setPitch(1.25f)
-                web.post {
-                    web.evaluateJavascript("window.onRakanTts && window.onRakanTts($ttsReady)", null)
-                }
-            }
-        }
+        setupTts()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -174,16 +165,48 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    /** The built-in reader, so letters and guidance speak before anything is recorded. */
+    private fun setupTts() {
+        val listener = TextToSpeech.OnInitListener { status ->
+            val engine = tts
+            if (status == TextToSpeech.SUCCESS && engine != null) {
+                var res = TextToSpeech.LANG_NOT_SUPPORTED
+                try {
+                    res = engine.setLanguage(Locale("ar"))
+                    engine.setSpeechRate(0.85f)
+                    engine.setPitch(1.2f)
+                } catch (e: Exception) {
+                    res = TextToSpeech.LANG_NOT_SUPPORTED
+                }
+                ttsReady = res >= TextToSpeech.LANG_AVAILABLE
+                val ready = ttsReady
+                web.post {
+                    web.evaluateJavascript(
+                        "window.onRakanTts && window.onRakanTts(" + ready + ")", null
+                    )
+                }
+            }
+        }
+        tts = try {
+            TextToSpeech(this, listener)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun notifyPage() {
+        web.evaluateJavascript("window.onRakanPermissionResult && window.onRakanPermissionResult()", null)
+    }
+
     override fun onResume() {
         super.onResume()
         hideSystemBars()
         if (leavingForSettings) {
-            // Back from a system screen — pin again and let the page refresh its state.
             leavingForSettings = false
             web.postDelayed({
                 startPinning()
-                web.evaluateJavascript("window.onRakanPermissionResult && window.onRakanPermissionResult()", null)
-            }, 400)
+                notifyPage()
+            }, 400L)
         } else {
             startPinning()
         }
@@ -195,7 +218,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        try { tts?.stop(); tts?.shutdown() } catch (e: Exception) { }
+        try {
+            tts?.stop()
+            tts?.shutdown()
+        } catch (e: Exception) {
+            // nothing to clean up
+        }
         tts = null
         super.onDestroy()
     }
@@ -218,25 +246,28 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopPinning() {
         if (!pinned) return
-        try { stopLockTask() } catch (e: Exception) { }
+        try {
+            stopLockTask()
+        } catch (e: Exception) {
+            // already out of lock task
+        }
         pinned = false
     }
 
     /** Leaves lock task mode, then opens a system screen the parent asked for. */
-    private fun openExternal(build: () -> Intent) {
+    private fun openExternal(intent: Intent) {
         runOnUiThread {
             leavingForSettings = true
             stopPinning()
             web.postDelayed({
                 try {
-                    val i = build()
-                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    startActivity(i)
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(intent)
                 } catch (e: Exception) {
                     leavingForSettings = false
                     startPinning()
                 }
-            }, 250)
+            }, 250L)
         }
     }
 
@@ -244,34 +275,36 @@ class MainActivity : AppCompatActivity() {
         try {
             videosDir.mkdirs()
             photosDir.mkdirs()
-            soundFolders.forEach { File(rootDir, it).mkdirs() }
-            // A note so the folders are self-explanatory in any file manager.
+            val voices = arrayOf("mom", "dad")
+            val parts = arrayOf("letters/ar", "letters/en", "numbers", "manners", "prayer")
+            for (v in voices) {
+                for (p in parts) {
+                    File(soundsDir, v + "/" + p).mkdirs()
+                }
+            }
+            File(soundsDir, "quran").mkdirs()
+            File(soundsDir, "app").mkdirs()
+
             val readme = File(soundsDir, "اقرأني.txt")
             if (!readme.exists()) {
-                readme.writeText(
-                    buildString {
-                        appendLine("مجلدات الصوت الخاصة بتطبيق راكان")
-                        appendLine("=================================")
-                        appendLine()
-                        appendLine("فيه ثلاث أصوات ممكن التطبيق ينطق بيها، وبتختار كل واحد فين من الإعدادات:")
-                        appendLine("  • صوت التطبيق : قارئ أندرويد المدمّج — شغال من غير ما تسجّل حاجة")
-                        appendLine("  • ماما        : تسجيلاتك في مجلد mom")
-                        appendLine("  • بابا        : تسجيلاتك في مجلد dad")
-                        appendLine()
-                        appendLine("mom/ و dad/ جوه كل واحد منهم:")
-                        appendLine("  letters/ar  : الحروف العربية — 1.mp3 إلى 28.mp3 بترتيب أ ب ت ث ج ح خ د ...")
-                        appendLine("  letters/en  : الحروف الإنجليزية — 1.mp3 إلى 26.mp3 بترتيب A B C D ...")
-                        appendLine("  numbers     : الأرقام — 1.mp3 إلى 20.mp3")
-                        appendLine("  manners     : جُمل الأخلاق — 1.mp3 وهكذا بترتيب ظهورها في التطبيق")
-                        appendLine("  prayer      : خطوات الصلاة — 1.mp3 إلى 7.mp3")
-                        appendLine()
-                        appendLine("quran : المصحف المعلّم — باسم رقم السورة: 001.mp3 ... 114.mp3")
-                        appendLine("app   : welcome.mp3 (الترحيب) و bravo.mp3 (التشجيع) و timeup.mp3 (انتهاء الوقت)")
-                        appendLine()
-                        appendLine("الصيغ المقبولة: mp3 أو m4a أو ogg أو wav")
-                        appendLine("مش لازم تملا كل حاجة — أي ملف ناقص التطبيق بيستخدم صوته المدمّج مكانه.")
-                    }
-                )
+                val text = StringBuilder()
+                text.append("مجلدات الصوت الخاصة بتطبيق راكان\n")
+                text.append("=================================\n\n")
+                text.append("فيه ثلاث أصوات، وبتختار كل قسم بأي صوت من الإعدادات:\n")
+                text.append("  • صوت التطبيق : قارئ أندرويد المدمّج — شغال من غير تسجيل\n")
+                text.append("  • ماما        : تسجيلاتك في مجلد mom\n")
+                text.append("  • بابا        : تسجيلاتك في مجلد dad\n\n")
+                text.append("جوه mom/ و dad/:\n")
+                text.append("  letters/ar  : 1.mp3 إلى 28.mp3 بترتيب أ ب ت ث ج ح خ د ...\n")
+                text.append("  letters/en  : 1.mp3 إلى 26.mp3 بترتيب A B C D ...\n")
+                text.append("  numbers     : 1.mp3 إلى 20.mp3\n")
+                text.append("  manners     : 1.mp3 وهكذا بترتيب الجُمل في التطبيق\n")
+                text.append("  prayer      : 1.mp3 إلى 7.mp3\n\n")
+                text.append("quran : المصحف المعلّم — برقم السورة: 001.mp3 ... 114.mp3\n")
+                text.append("app   : welcome.mp3 و bravo.mp3 و timeup.mp3\n\n")
+                text.append("الصيغ المقبولة: mp3 أو m4a أو ogg أو wav\n")
+                text.append("أي ملف ناقص، التطبيق بيستخدم صوته المدمّج مكانه.\n")
+                readme.writeText(text.toString())
             }
         } catch (e: Exception) {
             // No storage permission yet; folders get created once it is granted.
@@ -282,67 +315,92 @@ class MainActivity : AppCompatActivity() {
     private fun serve(url: Uri): WebResourceResponse? {
         if (url.host != "rakan.local") return null
         val path = url.path ?: return null
-        return try {
+        try {
             if (path.startsWith("/media/")) {
-                val rel = URLDecoder.decode(path.removePrefix("/media/"), "UTF-8")
+                val rel = URLDecoder.decode(path.substring(7), "UTF-8")
                 if (rel.isEmpty() || rel.contains("..")) return null
                 val file = File(rootDir, rel)
                 if (!file.exists() || !file.isFile) return null
                 if (!file.canonicalPath.startsWith(rootDir.canonicalPath)) return null
-                WebResourceResponse(mimeOf(file.name), null, FileInputStream(file))
-            } else {
-                val asset = "app" + (if (path == "/") "/index.html" else path)
-                WebResourceResponse(mimeOf(asset), "UTF-8", assets.open(asset))
+                return WebResourceResponse(mimeOf(file.name), null, FileInputStream(file))
             }
+            val asset = if (path == "/") "app/index.html" else "app" + path
+            return WebResourceResponse(mimeOf(asset), "UTF-8", assets.open(asset))
         } catch (e: Exception) {
-            null
+            return null
         }
     }
 
     private fun mimeOf(name: String): String {
-        return when (name.substringAfterLast('.', "").lowercase()) {
-            "html" -> "text/html"
-            "js" -> "application/javascript"
-            "css" -> "text/css"
-            "svg" -> "image/svg+xml"
-            "json" -> "application/json"
-            "mp3" -> "audio/mpeg"
-            "m4a" -> "audio/mp4"
-            "ogg" -> "audio/ogg"
-            "wav" -> "audio/wav"
-            "mp4" -> "video/mp4"
-            else -> MimeTypeMap.getSingleton()
-                .getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase())
-                ?: "application/octet-stream"
-        }
+        val ext = name.substringAfterLast('.', "").lowercase(Locale.US)
+        if (ext == "html") return "text/html"
+        if (ext == "js") return "application/javascript"
+        if (ext == "css") return "text/css"
+        if (ext == "svg") return "image/svg+xml"
+        if (ext == "json") return "application/json"
+        if (ext == "mp3") return "audio/mpeg"
+        if (ext == "m4a") return "audio/mp4"
+        if (ext == "ogg") return "audio/ogg"
+        if (ext == "wav") return "audio/wav"
+        if (ext == "mp4") return "video/mp4"
+        val guess = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+        return guess ?: "application/octet-stream"
     }
 
     private fun hasMediaAccess(): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()) return true
-        val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (Environment.isExternalStorageManager()) return true
+        }
+        val perms: Array<String> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
         } else {
             arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
-        return perms.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
+        for (p in perms) {
+            if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
+                return false
+            }
+        }
+        return true
     }
 
     private fun listMediaFiles(kind: String): JSONArray {
         val out = JSONArray()
         val dir = if (kind == "videos") videosDir else photosDir
-        val exts = if (kind == "videos") setOf("mp4", "m4v", "webm", "mkv", "3gp")
-        else setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "heic")
-        val files = try { dir.listFiles() } catch (e: Exception) { null } ?: return out
-        files.filter { it.isFile && it.extension.lowercase() in exts }
-            .sortedByDescending { it.lastModified() }
-            .forEach { f ->
-                out.put(JSONObject().apply {
-                    put("name", f.name)
-                    put("title", f.nameWithoutExtension)
-                    put("url", "https://rakan.local/media/$kind/" + Uri.encode(f.name))
-                })
-            }
+        val exts: List<String> = if (kind == "videos") {
+            listOf("mp4", "m4v", "webm", "mkv", "3gp")
+        } else {
+            listOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "heic")
+        }
+        val files = try {
+            dir.listFiles()
+        } catch (e: Exception) {
+            null
+        } ?: return out
+
+        val wanted = ArrayList<File>()
+        for (f in files) {
+            if (f.isFile && exts.contains(f.extension.lowercase(Locale.US))) wanted.add(f)
+        }
+        wanted.sortByDescending { it.lastModified() }
+        for (f in wanted) {
+            val o = JSONObject()
+            o.put("name", f.name)
+            o.put("title", f.nameWithoutExtension)
+            o.put("url", "https://rakan.local/media/" + kind + "/" + Uri.encode(f.name))
+            out.put(o)
+        }
         return out
+    }
+
+    /** Build number this APK came from, taken from the version name "1.N". */
+    private fun currentBuild(): Int {
+        return try {
+            val name = packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0"
+            name.substringAfterLast('.').toIntOrNull() ?: 0
+        } catch (e: Exception) {
+            0
+        }
     }
 
     inner class Bridge {
@@ -359,19 +417,22 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun rootPath(): String = rootDir.absolutePath
 
-        /**
-         * Finds a sound by base name, whatever audio extension it was saved with.
-         * Returns the url to play, or "" when nothing is there.
-         */
+        /** Finds a sound by base name, whatever audio extension it was saved with. */
         @JavascriptInterface
         fun soundUrl(relNoExt: String): String {
             if (relNoExt.contains("..")) return ""
-            for (ext in listOf("mp3", "m4a", "ogg", "wav", "opus", "aac")) {
-                val f = File(rootDir, "$relNoExt.$ext")
+            val exts = listOf("mp3", "m4a", "ogg", "wav", "opus", "aac")
+            for (ext in exts) {
+                val f = File(rootDir, relNoExt + "." + ext)
                 try {
                     if (f.exists() && f.isFile && f.canonicalPath.startsWith(rootDir.canonicalPath)) {
-                        val rel = f.absolutePath.removePrefix(rootDir.absolutePath).trimStart('/')
-                        return "https://rakan.local/media/" + rel.split("/").joinToString("/") { Uri.encode(it) }
+                        val parts = (relNoExt + "." + ext).split("/")
+                        val encoded = StringBuilder()
+                        for (p in parts) {
+                            if (encoded.isNotEmpty()) encoded.append("/")
+                            encoded.append(Uri.encode(p))
+                        }
+                        return "https://rakan.local/media/" + encoded.toString()
                     }
                 } catch (e: Exception) {
                     return ""
@@ -380,14 +441,21 @@ class MainActivity : AppCompatActivity() {
             return ""
         }
 
-        /** How many audio files sit in a folder — used to show progress in settings. */
+        /** How many audio files sit in a folder — shown in settings. */
         @JavascriptInterface
         fun countSounds(rel: String): Int {
             if (rel.contains("..")) return 0
-            val exts = setOf("mp3", "m4a", "ogg", "wav", "opus", "aac")
             return try {
-                File(rootDir, rel).listFiles()?.count { it.isFile && it.extension.lowercase() in exts } ?: 0
-            } catch (e: Exception) { 0 }
+                val files = File(rootDir, rel).listFiles() ?: return 0
+                val exts = listOf("mp3", "m4a", "ogg", "wav", "opus", "aac")
+                var n = 0
+                for (f in files) {
+                    if (f.isFile && exts.contains(f.extension.lowercase(Locale.US))) n++
+                }
+                n
+            } catch (e: Exception) {
+                0
+            }
         }
 
         @JavascriptInterface
@@ -396,7 +464,7 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun requestAccess() {
             runOnUiThread {
-                val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val perms: Array<String> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
                 } else {
                     arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
@@ -408,61 +476,96 @@ class MainActivity : AppCompatActivity() {
         /** The reliable route on Android 11+: the system "All files access" page. */
         @JavascriptInterface
         fun requestAllFilesAccess() {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) { requestAccess(); return }
-            openExternal {
-                Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                    data = Uri.parse("package:$packageName")
-                }
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                requestAccess()
+                return
             }
+            val i = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+            i.data = Uri.parse("package:" + packageName)
+            openExternal(i)
         }
 
         /** App info page — the fallback when the direct permission screen is blocked. */
         @JavascriptInterface
         fun openAppSettings() {
-            openExternal {
-                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                    data = Uri.parse("package:$packageName")
-                }
-            }
+            val i = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            i.data = Uri.parse("package:" + packageName)
+            openExternal(i)
         }
 
         @JavascriptInterface
         fun openPinningSettings() {
-            openExternal { Intent(Settings.ACTION_SECURITY_SETTINGS) }
+            openExternal(Intent(Settings.ACTION_SECURITY_SETTINGS))
         }
 
         @JavascriptInterface
-        fun makeFolders() { runOnUiThread { ensureFolders() } }
+        fun makeFolders() {
+            runOnUiThread { ensureFolders() }
+        }
+
+        @JavascriptInterface
+        fun isPinned(): Boolean = pinned
+
+        /* ---------- parent settings ---------- */
+
+        @JavascriptInterface
+        fun getPrefs(): String {
+            val p = getSharedPreferences("rakan", MODE_PRIVATE)
+            return p.getString("state", "") ?: ""
+        }
+
+        @JavascriptInterface
+        fun setPrefs(json: String) {
+            val p = getSharedPreferences("rakan", MODE_PRIVATE)
+            p.edit().putString("state", json).apply()
+        }
 
         /* ---------- the app's own voice ---------- */
 
         @JavascriptInterface
         fun ttsReady(): Boolean = ttsReady
 
-        /** Speaks text with the device reader. Arabic by default, "en" for the English letters. */
         @JavascriptInterface
         fun speak(text: String, lang: String) {
-            val t = tts ?: return
+            val engine = tts ?: return
             runOnUiThread {
                 try {
-                    t.setLanguage(if (lang == "en") Locale.ENGLISH else Locale("ar"))
-                    t.speak(text, TextToSpeech.QUEUE_FLUSH, null, "rakan")
-                } catch (e: Exception) { }
+                    if (lang == "en") {
+                        engine.setLanguage(Locale.ENGLISH)
+                    } else {
+                        engine.setLanguage(Locale("ar"))
+                    }
+                    engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "rakan")
+                } catch (e: Exception) {
+                    // nothing to say
+                }
             }
         }
 
         @JavascriptInterface
         fun stopSpeaking() {
-            runOnUiThread { try { tts?.stop() } catch (e: Exception) { } }
+            runOnUiThread {
+                try {
+                    tts?.stop()
+                } catch (e: Exception) {
+                    // already quiet
+                }
+            }
         }
 
         /* ---------- updates ---------- */
 
         @JavascriptInterface
-        fun buildNumber(): Int = BuildConfig.BUILD_NUMBER
+        fun buildNumber(): Int = currentBuild()
 
         @JavascriptInterface
-        fun versionName(): String = BuildConfig.VERSION_NAME
+        fun versionName(): String {
+            return try {
+                packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0"
+            } catch (e: Exception) {
+                "1.0"
+            }
+        }
 
         /**
          * Asks GitHub for the newest published build and reports back to the page.
@@ -471,66 +574,66 @@ class MainActivity : AppCompatActivity() {
          */
         @JavascriptInterface
         fun checkUpdate(owner: String, repo: String) {
-            Thread {
+            val current = currentBuild()
+            val thread = Thread {
                 var latest = -1
-                var link = "https://github.com/$owner/$repo/releases/latest"
+                var link = "https://github.com/" + owner + "/" + repo + "/releases/latest"
                 var error = ""
                 var conn: HttpURLConnection? = null
                 try {
-                    conn = (URL("https://api.github.com/repos/$owner/$repo/releases/latest")
-                        .openConnection() as HttpURLConnection).apply {
-                        requestMethod = "GET"
-                        connectTimeout = 8000
-                        readTimeout = 8000
-                        setRequestProperty("Accept", "application/vnd.github+json")
-                        setRequestProperty("User-Agent", "Rakan")
-                    }
-                    if (conn.responseCode == 200) {
-                        val body = conn.inputStream.bufferedReader().use { it.readText() }
+                    val u = URL("https://api.github.com/repos/" + owner + "/" + repo + "/releases/latest")
+                    val c = u.openConnection() as HttpURLConnection
+                    conn = c
+                    c.requestMethod = "GET"
+                    c.connectTimeout = 8000
+                    c.readTimeout = 8000
+                    c.setRequestProperty("Accept", "application/vnd.github+json")
+                    c.setRequestProperty("User-Agent", "Rakan")
+                    val code = c.responseCode
+                    if (code == 200) {
+                        val body = c.inputStream.bufferedReader().use { it.readText() }
                         val o = JSONObject(body)
                         link = o.optString("html_url", link)
-                        latest = Regex("\\d+").find(o.optString("tag_name", ""))?.value?.toIntOrNull() ?: -1
-                    } else if (conn.responseCode == 404) {
+                        val tag = o.optString("tag_name", "")
+                        val digits = StringBuilder()
+                        for (ch in tag) {
+                            if (ch.isDigit()) digits.append(ch)
+                        }
+                        latest = digits.toString().toIntOrNull() ?: -1
+                    } else if (code == 404) {
                         error = "private"
                     } else {
-                        error = "http-" + conn.responseCode
+                        error = "http"
                     }
                 } catch (e: Exception) {
                     error = "network"
                 } finally {
-                    try { conn?.disconnect() } catch (e: Exception) { }
+                    try {
+                        conn?.disconnect()
+                    } catch (e: Exception) {
+                        // ignore
+                    }
                 }
-                val payload = JSONObject().apply {
-                    put("latest", latest)
-                    put("current", BuildConfig.BUILD_NUMBER)
-                    put("url", link)
-                    put("error", error)
-                }.toString()
+                val payload = JSONObject()
+                payload.put("latest", latest)
+                payload.put("current", current)
+                payload.put("url", link)
+                payload.put("error", error)
+                val quoted = JSONObject.quote(payload.toString())
                 runOnUiThread {
                     web.evaluateJavascript(
-                        "window.onRakanUpdate && window.onRakanUpdate(" + JSONObject.quote(payload) + ")", null
+                        "window.onRakanUpdate && window.onRakanUpdate(" + quoted + ")", null
                     )
                 }
-            }.start()
+            }
+            thread.start()
         }
 
-        /** Opens a link outside the app — releases page, nothing else. */
+        /** Opens a link outside the app — the releases page, nothing else. */
         @JavascriptInterface
         fun openUrl(url: String) {
             if (!url.startsWith("https://")) return
-            openExternal { Intent(Intent.ACTION_VIEW, Uri.parse(url)) }
-        }
-
-        @JavascriptInterface
-        fun isPinned(): Boolean = pinned
-
-        @JavascriptInterface
-        fun getPrefs(): String =
-            getSharedPreferences("rakan", MODE_PRIVATE).getString("state", "") ?: ""
-
-        @JavascriptInterface
-        fun setPrefs(json: String) {
-            getSharedPreferences("rakan", MODE_PRIVATE).edit().putString("state", json).apply()
+            openExternal(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         }
 
         /** Unpins the screen and hands the phone back to the parent. */

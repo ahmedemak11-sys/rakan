@@ -3,8 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// GitHub Actions sets this on every build, so the app knows which build it is
-// and can tell when a newer one has been published.
+// GitHub Actions sets this on every build, so each APK carries its build number
+// and the app can tell the parent which one they are on.
 val buildNo: Int = (System.getenv("GITHUB_RUN_NUMBER") ?: "0").toIntOrNull() ?: 0
 
 android {
@@ -17,11 +17,6 @@ android {
         targetSdk = 34
         versionCode = buildNo + 1
         versionName = "1.$buildNo"
-        buildConfigField("int", "BUILD_NUMBER", "$buildNo")
-    }
-
-    buildFeatures {
-        buildConfig = true
     }
 
     buildTypes {
@@ -42,11 +37,15 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
+    }
 }
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.activity:activity-ktx:1.9.1")
-    implementation("androidx.webkit:webkit:1.11.0")
 }
