@@ -11,6 +11,7 @@ var fileFace=document.getElementById('fileFace');
 
 var AR=['٠','١','٢','٣','٤','٥','٦','٧','٨','٩'];
 function ar(n){return String(n).split('').map(function(c){return /[0-9]/.test(c)?AR[+c]:c;}).join('');}
+function p3(n){return ('00'+n).slice(-3);}
 
 /* ---------------- الصوت ---------------- */
 var ac=null;
@@ -27,6 +28,71 @@ function tone(f,d,t){
     g.gain.exponentialRampToValueAtTime(.0001,n+(d||.18));
     o.start(n); o.stop(n+(d||.18)+.03);
   }catch(e){}
+}
+
+/* مشغّل الأصوات المسجّلة. بيدوّر على الملف في مجلد /Rakan/sounds
+   ولو ملقاهوش بيرجع لصوت التطبيق أو للنغمة البسيطة. */
+var audio=new Audio();
+audio.preload='auto';
+function soundUrl(rel){
+  if(!B)return '';
+  try{ return B.soundUrl(rel)||''; }catch(e){ return ''; }
+}
+function hasSound(rel){ return soundUrl(rel)!==''; }
+function sfx(rel,fallback){
+  if(state.mute){ return false; }
+  var url=soundUrl(rel);
+  if(!url){ if(fallback)fallback(); return false; }
+  try{
+    audio.pause();
+    audio.currentTime=0;
+    audio.src=url;
+    audio.onerror=function(){ if(fallback)fallback(); };
+    var p=audio.play();
+    if(p&&p.catch)p.catch(function(){ if(fallback)fallback(); });
+    return true;
+  }catch(e){ if(fallback)fallback(); return false; }
+}
+function stopSfx(){
+  try{ audio.pause(); }catch(e){}
+  if(B){ try{ B.stopSpeaking(); }catch(e){} }
+}
+
+/* صوت التطبيق = قارئ أندرويد المدمّج */
+var ttsOk=false;
+try{ ttsOk = B ? !!B.ttsReady() : false; }catch(e){ ttsOk=false; }
+window.onRakanTts=function(ok){ ttsOk=!!ok; };
+function speak(text,lang){
+  if(state.mute) return false;
+  if(!B||!ttsOk) return false;
+  try{ B.speak(text,lang||'ar'); return true; }catch(e){ return false; }
+}
+
+/* النطق حسب الصوت المختار للقسم:
+   app = قارئ أندرويد · mom = تسجيلات ماما · dad = تسجيلات بابا */
+function voiceOf(section){ return (state.voices&&state.voices[section])||'app'; }
+function say(section, relAfterVoice, text, lang, tn){
+  var v=voiceOf(section);
+  function toneFb(){ if(tn)tn(); }
+  function ttsFb(){ if(!speak(text,lang)) toneFb(); }
+  if(v==='app'){ ttsFb(); return; }
+  sfx('sounds/'+v+'/'+relAfterVoice, ttsFb);
+}
+
+/* ---------------- السحب ---------------- */
+function addSwipe(el,cb){
+  var x0=0,y0=0,t0=0,on=false;
+  el.addEventListener('pointerdown',function(e){ x0=e.clientX;y0=e.clientY;t0=Date.now();on=true; });
+  el.addEventListener('pointerup',function(e){
+    if(!on)return; on=false;
+    var dx=e.clientX-x0, dy=e.clientY-y0, dt=Date.now()-t0;
+    if(dt>1000)return;
+    var ax=Math.abs(dx), ay=Math.abs(dy);
+    if(ax<40&&ay<40){ if(cb.tap)cb.tap(); return; }
+    if(ax>ay){ if(dx<0&&cb.left)cb.left(); else if(dx>0&&cb.right)cb.right(); }
+    else { if(dy<0&&cb.up)cb.up(); else if(dy>0&&cb.down)cb.down(); }
+  });
+  el.addEventListener('pointercancel',function(){on=false;});
 }
 
 /* ---------------- الرسومات ---------------- */
@@ -102,6 +168,7 @@ function iBack(){return '<svg width="22" height="22" viewBox="0 0 24 24"><path d
 function iStar(on,s){s=s||12;return '<svg width="'+s+'" height="'+s+'" viewBox="0 0 24 24"><path d="M12 2.6l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.5 6.1 20.6l1.2-6.5L2.5 9.5l6.6-.9L12 2.6z" fill="'+(on?'#F5A623':'#CDD6E2')+'"/></svg>';}
 function iSpk(){return '<svg width="17" height="17" viewBox="0 0 24 24"><path d="M5 9.5h3.5L13 5.5v13L8.5 14.5H5v-5z" fill="#fff"/><path d="M16 9a4.5 4.5 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/></svg>';}
 function iChev(d){return '<svg width="24" height="24" viewBox="0 0 24 24"><path d="'+(d==='up'?'M6 15l6-6 6 6':'M6 9l6 6 6-6')+'" stroke="#fff" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';}
+function iArrow(d){return '<svg width="24" height="24" viewBox="0 0 24 24"><path d="'+(d==='right'?'M9 5l7 7-7 7':'M15 5l-7 7 7 7')+'" stroke="#fff" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';}
 function iGear(){return '<svg width="21" height="21" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" stroke="#22324F" stroke-width="2" fill="none"/><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6L18 18M18 6l-1.4 1.4M7.4 16.6L6 18" stroke="#22324F" stroke-width="2" stroke-linecap="round"/></svg>';}
 
 function shapeSvg(k,c,s){s=s||56;var m={
@@ -127,7 +194,18 @@ var AR_L=[['أ','أرنب'],['ب','بطة'],['ت','تفاحة'],['ث','ثعلب'
 var EN_L=[['A','Apple'],['B','Ball'],['C','Cat'],['D','Duck'],['E','Egg'],['F','Fish'],['G','Goat'],['H','Hat'],['I','Ice'],['J','Jam'],['K','Kite'],['L','Lion'],['M','Moon'],['N','Nest'],['O','Owl'],['P','Pen'],['Q','Queen'],['R','Rain'],['S','Sun'],['T','Tree'],['U','Umbrella'],['V','Van'],['W','Water'],['X','Box'],['Y','Yoyo'],['Z','Zebra']];
 var MANNERS=['لمّا حد يديك حاجة، قول: شكراً يا حبيبي','اغسل إيديك كويس قبل ما تاكل','لمّا تدخل البيت قول: السلام عليكم','ماتاخدش لعبة حد من غير ما تستأذن','لمّا تغلط، قول: أنا آسف — دي شجاعة','كلّم ماما وبابا بصوت هادي ومتعلّيش صوتك','شارك لعبك مع أخواتك وأصحابك','لمّا تاخد حاجة، خدها بإيدك اليمين'];
 var PRAYER=[['نجهّز نفسنا','نتوضّا ونلبس هدوم نضيفة'],['نقف ونتجه للقبلة','نقف مستعدلين ونبصّ ناحية القبلة'],['نكبّر','نرفع إيدينا ونقول: الله أكبر'],['نقرا','نقرا الفاتحة وسورة قصيرة'],['نركع','نحني ضهرنا ونقول: سبحان ربي العظيم'],['نسجد','نسجد على الأرض ونقول: سبحان ربي الأعلى'],['نسلّم','في الآخر نقول: السلام عليكم ورحمة الله']];
-var SURAHS=[['الفاتحة',7],['الإخلاص',4],['الفلق',5],['الناس',6],['الكوثر',3],['المسد',5],['النصر',3],['الماعون',7]];
+
+/* السور بترقيمها في المصحف — عشان أي مصحف منزّل بأرقام قياسية يشتغل على طول */
+var SURAHS=[
+  {n:1,name:'الفاتحة',a:7},{n:114,name:'الناس',a:6},{n:113,name:'الفلق',a:5},
+  {n:112,name:'الإخلاص',a:4},{n:111,name:'المسد',a:5},{n:110,name:'النصر',a:3},
+  {n:109,name:'الكافرون',a:6},{n:108,name:'الكوثر',a:3},{n:107,name:'الماعون',a:7},
+  {n:106,name:'قريش',a:4},{n:105,name:'الفيل',a:5},{n:104,name:'الهمزة',a:9},
+  {n:103,name:'العصر',a:3},{n:102,name:'التكاثر',a:8},{n:101,name:'القارعة',a:11},
+  {n:100,name:'العاديات',a:11},{n:99,name:'الزلزلة',a:8},{n:97,name:'القدر',a:5},
+  {n:95,name:'التين',a:8},{n:94,name:'الشرح',a:8},{n:93,name:'الضحى',a:11}
+];
+
 var DEMO_PHOTOS=[['#8ED8F8','#FFD98A','sun'],['#FFC2D6','#F6A5C0','balloon'],['#B9E8C4','#6CBF72','sun'],['#FFE1A8','#F5A623','balloon'],['#C9C2F7','#8A74E8','sun'],['#A8E4EA','#128C9B','balloon']];
 function sceneSvg(seed){
   var sky=seed[0],a=seed[1],k=seed[2];
@@ -155,16 +233,21 @@ function cfg(){return CFG[state.age]||CFG['4-5'];}
 var state={
   pin:'1234', childName:'', age:'4-5', minutes:20, mute:false,
   hidden:{}, hasAvatar:false, avatar:{face:0,skin:1,hair:0,hairColor:1,eyes:0,shirt:0},
-  hintShown:false
+  hintShown:false,
+  voices:{letters:'app',numbers:'app',manners:'app',prayer:'app'},
+  repoOwner:'', repoName:''
 };
-var ui={app:null,lang:'ar',picked:null,photoIndex:0,reelIndex:0,mannerIndex:0,prayerStep:0,surah:null,
+var VOICES=[{id:'app',name:'التطبيق'},{id:'mom',name:'ماما'},{id:'dad',name:'بابا'}];
+function voiceName(id){for(var i=0;i<VOICES.length;i++)if(VOICES[i].id===id)return VOICES[i].name;return 'التطبيق';}
+var ui={app:null,lang:'ar',picked:null,pickedIndex:0,photoIndex:0,reelIndex:0,mannerIndex:0,prayerStep:0,surah:null,
   gameRound:0,gameScore:0,gameTarget:null,gameOpts:[]};
 var photos=[], videos=[], hasAccess=true;
 
 function savePrefs(){
   if(!B)return;
   try{B.setPrefs(JSON.stringify({pin:state.pin,childName:state.childName,age:state.age,minutes:state.minutes,
-    mute:state.mute,hidden:state.hidden,hasAvatar:state.hasAvatar,avatar:state.avatar,hintShown:state.hintShown}));}catch(e){}
+    mute:state.mute,hidden:state.hidden,hasAvatar:state.hasAvatar,avatar:state.avatar,hintShown:state.hintShown,
+    voices:state.voices,repoOwner:state.repoOwner,repoName:state.repoName}));}catch(e){}
 }
 function loadPrefs(){
   if(!B)return;
@@ -185,17 +268,15 @@ function loadMedia(){
   if(!photos.length) photos=DEMO_PHOTOS.map(function(s){return {kind:'demo',seed:s};});
 }
 function folder(kind){ try{ return B?B.folderPath(kind):'/storage/emulated/0/Rakan/'+kind; }catch(e){ return '/storage/emulated/0/Rakan/'+kind; } }
+function countSounds(rel){ try{ return B?B.countSounds(rel):0; }catch(e){ return 0; } }
 
 /* ---------------- وقت اللعب ---------------- */
 var sessionStart=Date.now(), timeUpShown=false;
-function minutesLeft(){
-  var used=(Date.now()-sessionStart)/60000;
-  return Math.max(0,Math.ceil(state.minutes-used));
-}
+function minutesLeft(){ return Math.max(0,Math.ceil(state.minutes-(Date.now()-sessionStart)/60000)); }
 setInterval(function(){
   renderStatus();
   if(!timeUpShown && minutesLeft()<=0 && !document.getElementById('settings') && !document.getElementById('gate')){
-    timeUpShown=true; stopGame(); closeLayer('reelLayer'); closeLayer('viewer'); showTimeUp(true);
+    timeUpShown=true; stopGame(); stopSfx(); closeLayer('reelLayer'); closeLayer('viewer'); showTimeUp(true);
   }
 },20000);
 
@@ -232,6 +313,15 @@ function bar(t,x){return '<div class="appbar"><button class="rbtn" data-act="hom
 function homeDock(){dock.innerHTML='<button class="homebtn" data-act="home" aria-label="الرئيسية">'+iHome()+'</button>';}
 
 /* ---------------- الحروف والأرقام ---------------- */
+function sayLetter(i){
+  var lang=ui.lang, set=lang==='ar'?AR_L:EN_L, l=set[i];
+  var text = state.age==='2-3' ? l[0] : (l[0]+' ... '+l[1]);
+  say('letters','letters/'+lang+'/'+(i+1), text, lang, function(){ tone(400+i*18,.26); });
+}
+function sayNumber(n){
+  say('numbers','numbers/'+n, ar(n), 'ar', function(){ tone(380+n*40,.26); });
+}
+
 function renderLetters(){
   var set=ui.lang==='ar'?AR_L:EN_L, p=ui.picked, body;
   if(p){
@@ -244,7 +334,7 @@ function renderLetters(){
       '<button class="chip" data-lang="en" aria-pressed="'+(ui.lang==='en')+'">English</button></div>'+
       '<div class="tilegrid">'+set.map(function(l,i){return '<button class="lt" data-letter="'+i+'" style="direction:ltr">'+l[0]+'</button>';}).join('')+'</div>';
   }
-  view.innerHTML=bar('الحروف','<span class="pill">'+(state.age==='2-3'?'نطق':'نطق + كلمة')+'</span>')+body; homeDock();
+  view.innerHTML=bar('الحروف','<span class="pill">بصوت '+voiceName(voiceOf('letters'))+'</span>')+body; homeDock();
 }
 function renderNumbers(){
   var p=ui.picked, body, max=state.age==='6+'?20:10;
@@ -273,14 +363,23 @@ function renderPhotos(){
   view.innerHTML=bar('الصور','<span class="pill">'+ar(photos.length)+'</span>')+body; homeDock();
 }
 function openViewer(){
+  closeLayer('viewer');
   var p=photos[ui.photoIndex];
   var el=document.createElement('div'); el.className='viewer'; el.id='viewer';
-  el.innerHTML='<div class="frame">'+photoHtml(p)+'</div><div class="bar">'+
-    '<button class="rbtn" data-act="ph-prev">'+iChev('up')+'</button>'+
+  el.innerHTML='<div class="frame" id="photoFrame">'+photoHtml(p)+'</div><div class="bar">'+
+    '<button class="rbtn" data-act="ph-prev">'+iArrow('right')+'</button>'+
     '<span class="count">'+ar(ui.photoIndex+1)+' / '+ar(photos.length)+'</span>'+
-    '<button class="rbtn" data-act="ph-next">'+iChev('down')+'</button>'+
+    '<button class="rbtn" data-act="ph-next">'+iArrow('left')+'</button>'+
     '<button class="rbtn" data-act="ph-close">✕</button></div>';
   screenEl.appendChild(el);
+  var frame=document.getElementById('photoFrame');
+  addSwipe(frame,{ left:function(){movePhoto(1);}, right:function(){movePhoto(-1);} });
+}
+function movePhoto(d){
+  if(!photos.length)return;
+  ui.photoIndex=(ui.photoIndex+d+photos.length)%photos.length;
+  tone(500,.08,'triangle');
+  openViewer();
 }
 
 /* ---------------- الفيديوهات ---------------- */
@@ -292,8 +391,9 @@ function renderReelsScreen(){
 }
 function renderReels(){
   var v=videos[ui.reelIndex]; if(!v)return;
+  closeLayer('reelLayer');
   var el=document.createElement('div'); el.className='reel'; el.id='reelLayer';
-  el.innerHTML='<div class="stageview"><video id="reelVideo" src="'+v.url+'" playsinline autoplay></video>'+
+  el.innerHTML='<div class="stageview" id="reelStage"><video id="reelVideo" src="'+v.url+'" playsinline autoplay></video>'+
     '<button class="bigplay" data-act="reel-play" hidden id="reelPlay"><svg width="32" height="32" viewBox="0 0 24 24"><path d="M8 5.5l11 6.5-11 6.5v-13z" fill="#fff"/></svg></button>'+
     '<div class="overlay"><div class="top"><span class="tag">'+ar(ui.reelIndex+1)+' من '+ar(videos.length)+'</span>'+
     '<button class="rbtn" data-act="home" style="width:36px;height:36px">✕</button></div>'+
@@ -302,27 +402,40 @@ function renderReels(){
     '<div class="side"><button class="rbtn" data-act="reel-prev">'+iChev('up')+'</button>'+
     '<button class="rbtn" data-act="reel-next">'+iChev('down')+'</button></div></div></div></div>';
   screenEl.appendChild(el);
-  var vid=document.getElementById('reelVideo'), bar2=document.getElementById('reelBar'), pb=document.getElementById('reelPlay');
+
+  var vid=document.getElementById('reelVideo'), pbar=document.getElementById('reelBar'), pb=document.getElementById('reelPlay');
   if(vid){
-    vid.addEventListener('timeupdate',function(){ if(bar2&&vid.duration)bar2.style.width=(vid.currentTime/vid.duration*100)+'%'; });
+    vid.muted=state.mute;
+    vid.addEventListener('timeupdate',function(){ if(pbar&&vid.duration)pbar.style.width=(vid.currentTime/vid.duration*100)+'%'; });
     vid.addEventListener('ended',function(){ nextReel(1); });
     vid.addEventListener('pause',function(){ if(pb)pb.hidden=false; });
     vid.addEventListener('play',function(){ if(pb)pb.hidden=true; });
-    var p=vid.play(); if(p&&p.catch)p.catch(function(){ if(pb)pb.hidden=false; });
+    var pr=vid.play(); if(pr&&pr.catch)pr.catch(function(){ if(pb)pb.hidden=false; });
   }
+  addSwipe(document.getElementById('reelStage'),{
+    up:function(){nextReel(1);}, down:function(){nextReel(-1);},
+    tap:function(){ var v2=document.getElementById('reelVideo'); if(!v2)return; if(v2.paused)v2.play(); else v2.pause(); }
+  });
 }
 function nextReel(d){
   var nx=ui.reelIndex+d;
   if(nx>=videos.length){ closeLayer('reelLayer'); showTimeUp(false); return; }
   ui.reelIndex=(nx+videos.length)%videos.length;
-  closeLayer('reelLayer'); renderReels(); tone(480,.08,'triangle');
+  renderReels(); tone(480,.08,'triangle');
 }
 
 /* ---------------- بطاقات ---------------- */
+function sayManner(){
+  say('manners','manners/'+(ui.mannerIndex+1), MANNERS[ui.mannerIndex], 'ar', function(){ tone(440,.3); });
+}
+function sayPrayer(){
+  var s=PRAYER[ui.prayerStep];
+  say('prayer','prayer/'+(ui.prayerStep+1), s[0]+'. '+s[1], 'ar', function(){ tone(440,.3); });
+}
 function renderManners(){
-  view.innerHTML=bar('أخلاقي','<span class="pill">بصوت ماما</span>')+
+  view.innerHTML=bar('أخلاقي','<span class="pill">بصوت '+voiceName(voiceOf('manners'))+'</span>')+
     '<div class="card"><div style="width:70px;height:70px;border-radius:24px;background:var(--rose);display:grid;place-items:center">'+iHeart(42)+'</div>'+
-    '<p class="say">'+MANNERS[ui.mannerIndex]+'</p><button class="speak" data-act="say">'+iSpk()+' اسمعها</button></div>'+
+    '<p class="say">'+MANNERS[ui.mannerIndex]+'</p><button class="speak" data-act="say-manner">'+iSpk()+' اسمعها</button></div>'+
     '<div class="rowbtns"><button data-act="manner-prev">اللي قبله</button><button data-act="manner-next">اللي بعده</button></div>';
   homeDock();
 }
@@ -331,23 +444,44 @@ function renderPrayer(){
   view.innerHTML=bar('الصلاة','<span class="pill">'+ar(ui.prayerStep+1)+' من '+ar(PRAYER.length)+'</span>')+
     '<div class="card"><div style="width:78px;height:78px;border-radius:26px;background:var(--teal);display:grid;place-items:center">'+iPray()+'</div>'+
     '<p class="say" style="font-size:21px">'+s[0]+'</p><p style="margin:0;font-size:15px;color:var(--ink-soft);line-height:1.8">'+s[1]+'</p>'+
-    '<button class="speak" data-act="say">'+iSpk()+' اسمعها</button></div>'+
+    '<button class="speak" data-act="say-prayer">'+iSpk()+' اسمعها</button></div>'+
     '<div class="rowbtns"><button data-act="pray-prev">السابقة</button><button data-act="pray-next">التالية</button></div>';
   homeDock();
 }
 function renderQuran(){
   var body;
-  if(ui.surah!==null){var s=SURAHS[ui.surah];
+  if(ui.surah!==null){
+    var s=SURAHS[ui.surah];
+    var url=soundUrl('sounds/quran/'+p3(s.n));
     body='<div class="card"><div style="width:78px;height:78px;border-radius:26px;background:var(--olive);display:grid;place-items:center">'+iBook()+'</div>'+
-      '<p class="say" style="font-size:23px">سورة '+s[0]+'</p>'+
-      '<p style="margin:0;font-size:14px;color:var(--ink-soft)">'+ar(s[1])+' آيات · بصوت المصحف المعلّم</p>'+
-      '<div class="wave"><i></i><i></i><i></i><i></i><i></i></div>'+
+      '<p class="say" style="font-size:23px">سورة '+s.name+'</p>'+
+      '<p style="margin:0;font-size:14px;color:var(--ink-soft)">'+ar(s.a)+' آيات · رقم '+ar(s.n)+' في المصحف</p>'+
+      (url
+        ? '<div class="wave"><i></i><i></i><i></i><i></i><i></i></div>'+
+          '<div class="progress" style="width:100%;background:#E3E9F1"><i id="qBar" style="background:var(--olive)"></i></div>'+
+          '<button class="speak" data-act="quran-toggle" id="qBtn">'+iSpk()+' إيقاف مؤقت</button>'
+        : '<p style="margin:0;font-size:13px;color:#C33B22;line-height:1.8">مفيش ملف صوت للسورة دي.<br>حط ملف اسمه <b>'+p3(s.n)+'.mp3</b> في مجلد<br><code style="direction:ltr;background:#EEF3F8;border-radius:8px;padding:3px 8px;display:inline-block">'+folder('sounds/quran')+'</code></p>')+
       '<div class="rowbtns" style="width:100%"><button data-act="quran-back">كل السور</button></div></div>';
   } else {
+    var n=countSounds('sounds/quran');
     body='<div class="list">'+SURAHS.map(function(s,i){
-      return '<button class="row" data-surah="'+i+'"><span class="n" style="background:var(--olive)">'+ar(i+1)+'</span><span class="t">سورة '+s[0]+'</span><span class="s">'+ar(s[1])+' آيات</span></button>';}).join('')+'</div>';
+      var ok=hasSound('sounds/quran/'+p3(s.n));
+      return '<button class="row" data-surah="'+i+'"><span class="n" style="background:'+(ok?'var(--olive)':'#C3CBD6')+'">'+ar(s.n)+'</span>'+
+        '<span class="t">سورة '+s.name+'</span><span class="s">'+(ok?ar(s.a)+' آيات':'مفيش صوت')+'</span></button>';}).join('')+'</div>'+
+      (n?'':'<p style="margin:14px 2px 0;font-size:13px;color:var(--ink-soft);line-height:1.8;text-align:center">عشان التلاوة تشتغل، حمّل المصحف المعلّم وحط ملفاته في:<br><code style="direction:ltr;background:rgba(255,255,255,.75);border-radius:8px;padding:4px 9px;display:inline-block;margin-top:6px">'+folder('sounds/quran')+'</code></p>');
   }
-  view.innerHTML=bar('القرآن','<span class="pill">قصار السور</span>')+body; homeDock();
+  view.innerHTML=bar('القرآن','<span class="pill">قصار السور</span>')+body;
+  homeDock();
+  if(ui.surah!==null){
+    var s2=SURAHS[ui.surah];
+    if(soundUrl('sounds/quran/'+p3(s2.n))){
+      sfx('sounds/quran/'+p3(s2.n));
+      audio.ontimeupdate=function(){
+        var b=document.getElementById('qBar');
+        if(b&&audio.duration)b.style.width=(audio.currentTime/audio.duration*100)+'%';
+      };
+    }
+  } else { audio.ontimeupdate=null; }
 }
 
 /* ---------------- الألعاب ---------------- */
@@ -393,7 +527,7 @@ function winScreen(){
     '<button class="speak" style="background:#fff;color:var(--ink)" data-act="win-again">نلعب تاني</button>'+
     '<button class="speak" style="background:rgba(255,255,255,.18)" data-act="win-home">خلاص</button>';
   screenEl.appendChild(el);
-  tone(660,.2); setTimeout(function(){tone(820,.25);},180);
+  sfx('sounds/app/bravo',function(){ tone(660,.2); setTimeout(function(){tone(820,.25);},180); });
 }
 
 function startBalloons(){
@@ -563,7 +697,7 @@ function startMemory(){
   });
 }
 function startGame(id){
-  stopGame(); tone(560,.12,'triangle');
+  stopGame(); stopSfx(); tone(560,.12,'triangle');
   if(id==='balloons')startBalloons();
   else if(id==='fruit')startFruit();
   else if(id==='car')startCar();
@@ -600,42 +734,121 @@ function pinKey(k){
 }
 
 /* ---------------- الإعدادات ---------------- */
+function soundRow(label,rel){
+  var n=countSounds(rel), ok=n>0;
+  return '<div class="path" style="margin-bottom:8px"><span>'+label+'</span>'+
+    '<code>'+rel.replace('sounds/','')+'</code>'+
+    '<span style="color:'+(ok?'#1E8E68':'#B4442B')+'">'+(ok?ar(n)+' ملف':'فاضي')+'</span></div>';
+}
+/* اختيار الصوت لقسم واحد: التطبيق / ماما / بابا — مع عدد الملفات المتاحة لكل صوت */
+function voicePicker(section,label,folder){
+  var cur=voiceOf(section);
+  return '<div style="margin-bottom:14px"><div style="font-weight:700;font-size:14px;margin-bottom:7px">'+label+'</div>'+
+    '<div class="seg">'+VOICES.map(function(v){
+      var extra='';
+      if(v.id!=='app'){
+        var n=countSounds('sounds/'+v.id+'/'+folder);
+        extra=' <span style="opacity:.7;font-size:11px">('+(n?ar(n):'٠')+')</span>';
+      }
+      return '<button data-voice="'+section+':'+v.id+'" aria-pressed="'+(cur===v.id)+'">'+v.name+extra+'</button>';
+    }).join('')+'</div></div>';
+}
 function openSettings(){
-  loadMedia();
+  loadMedia(); stopSfx();
   var el=document.createElement('div'); el.className='settings'; el.id='settings';
   el.innerHTML='<header><button class="rbtn" data-act="settings-close" style="background:#EDF1F7;width:36px;height:36px">'+iBack()+'</button><h3>إعدادات ولي الأمر</h3>'+iGear()+'</header><div class="body">'+
-    (hasAccess?'':'<div class="warn">التطبيق محتاج إذن يقرا الملفات عشان يعرض الصور والفيديوهات.<br><br><button class="primary" data-act="ask-access" style="width:100%">افتح الإذن دلوقتي</button></div>')+
+    (hasAccess?'':'<div class="warn">التطبيق لسه مش شايف ملفات الموبايل. اضغط الزرار ده واختار <b>السماح</b>.</div>')+
+    '<div class="sgroup"><h4>الأذونات</h4>'+
+      '<button class="primary" style="width:100%" data-act="ask-access">'+(hasAccess?'إذن الملفات — مفتوح ✓':'افتح إذن الوصول للملفات')+'</button>'+
+      '<button class="primary" style="width:100%;margin-top:9px;background:#8A94A6" data-act="app-settings">صفحة التطبيق في الإعدادات</button>'+
+      '<button class="primary" style="width:100%;margin-top:9px;background:#8A94A6" data-act="pinning">إعدادات تثبيت الشاشة</button>'+
+      '<p class="note">التطبيق بيفك تثبيت الشاشة لوحده وهو بيفتحلك صفحة الإعدادات، وبيرجّعه لما ترجع.</p></div>'+
     '<div class="sgroup"><h4>الطفل</h4><div class="avatarrow"><span class="pic">'+(state.hasAvatar?avatarSvg(state.avatar):rakan('happy'))+'</span>'+
       '<div style="flex:1;min-width:0"><input class="field" id="childName" type="text" placeholder="اسم الطفل" value="'+state.childName+'">'+
       '<button class="primary" style="margin-top:9px;width:100%" data-act="open-studio">'+(state.hasAvatar?'غيّر الأفاتار':'اعمل أفاتار من صورة')+'</button></div></div></div>'+
     '<div class="sgroup"><h4>الفئة العمرية</h4><div class="seg">'+
       '<button data-age="2-3" aria-pressed="'+(state.age==='2-3')+'">٢ – ٣</button>'+
       '<button data-age="4-5" aria-pressed="'+(state.age==='4-5')+'">٤ – ٥</button>'+
-      '<button data-age="6+" aria-pressed="'+(state.age==='6+')+'">٦ +</button></div>'+
-      '<p class="note">الألعاب وصعوبتها ومستوى الحروف والأرقام بيتغيّروا لوحدهم على حسب الاختيار ده.</p></div>'+
+      '<button data-age="6+" aria-pressed="'+(state.age==='6+')+'">٦ +</button></div></div>'+
     '<div class="sgroup"><h4>وقت اللعب في الجلسة</h4><div class="seg">'+
       '<button data-min="15" aria-pressed="'+(state.minutes===15)+'">١٥ د</button>'+
       '<button data-min="20" aria-pressed="'+(state.minutes===20)+'">٢٠ د</button>'+
       '<button data-min="30" aria-pressed="'+(state.minutes===30)+'">٣٠ د</button>'+
-      '<button data-min="45" aria-pressed="'+(state.minutes===45)+'">٤٥ د</button></div>'+
-      '<p class="note">لما الوقت يخلص، راكان بيقول للطفل إنه تعب وهينام والتطبيق بيقفل الشاشة.</p></div>'+
-    '<div class="sgroup"><h4>المجلدات على الموبايل</h4>'+
-      '<div class="path"><span>فيديوهات</span><code>'+folder('videos')+'</code><span>'+ar(videos.length)+'</span></div>'+
+      '<button data-min="45" aria-pressed="'+(state.minutes===45)+'">٤٥ د</button></div></div>'+
+    '<div class="sgroup"><h4>الصور والفيديو</h4>'+
+      '<div class="path"><span>فيديوهات</span><code>videos</code><span>'+ar(videos.length)+'</span></div>'+
       '<div style="height:9px"></div>'+
-      '<div class="path"><span>صور</span><code>'+folder('photos')+'</code><span>'+ar(photos.length)+'</span></div>'+
-      '<button class="primary" style="width:100%;margin-top:10px;background:var(--mint)" data-act="rescan">أعد قراءة المجلدات</button>'+
-      '<p class="note">حط أي صورة أو فيديو في المجلد ده وهيظهر للطفل على طول. ولو ظبّطت تطبيق مزامنة مع جوجل درايف على نفس المجلد، اللي ترفعه على درايف هينزل هنا لوحده.</p></div>'+
+      '<div class="path"><span>صور</span><code>photos</code><span>'+ar(photos.length)+'</span></div>'+
+      '<p class="note">المسار الكامل: <code style="direction:ltr">'+(B?B.rootPath():'/storage/emulated/0/Rakan')+'</code></p></div>'+
+    '<div class="sgroup"><h4>الطفل يسمع صوت مين</h4>'+
+      voicePicker('letters','الحروف','letters/ar')+
+      voicePicker('numbers','الأرقام','numbers')+
+      voicePicker('manners','الأخلاق','manners')+
+      voicePicker('prayer','الصلاة','prayer')+
+      '<p class="note">'+(ttsOk
+        ? '«التطبيق» = القارئ المدمّج في الموبايل، شغال من غير ما تسجّل حاجة. والرقم جنب ماما وبابا هو عدد الملفات اللي التطبيق لقاها.'
+        : 'القارئ المدمّج مش متاح على الموبايل ده. نزّل <b>Speech Recognition &amp; Synthesis</b> من بلاي ستور وفعّل العربية، أو استخدم تسجيلات ماما وبابا.')+'</p></div>'+
+    '<div class="sgroup"><h4>ملفات الصوت المتاحة</h4>'+
+      soundRow('ماما — حروف','sounds/mom/letters/ar')+
+      soundRow('ماما — أرقام','sounds/mom/numbers')+
+      soundRow('ماما — أخلاق','sounds/mom/manners')+
+      soundRow('بابا — حروف','sounds/dad/letters/ar')+
+      soundRow('بابا — أرقام','sounds/dad/numbers')+
+      soundRow('بابا — أخلاق','sounds/dad/manners')+
+      soundRow('المصحف المعلّم','sounds/quran')+
+      soundRow('أصوات التطبيق','sounds/app')+
+      '<p class="note">فيه ملف اسمه <b>اقرأني.txt</b> جوه مجلد sounds بيشرح أسماء الملفات المطلوبة في كل مجلد. أي ملف ناقص، التطبيق بيستخدم صوته المدمّج مكانه.</p></div>'+
+    '<button class="primary" style="width:100%;background:var(--mint)" data-act="rescan">أعد قراءة المجلدات</button>'+
     '<div class="sgroup"><h4>الأقسام الظاهرة للطفل</h4><div class="toggles">'+APPS.map(function(a){
       return '<button class="tg" data-toggle="'+a.id+'" aria-pressed="'+(!state.hidden[a.id])+'"><span class="sw"></span><span class="nm">'+a.name+'</span></button>';}).join('')+'</div></div>'+
     '<div class="sgroup"><h4>عام</h4>'+
       '<button class="tg" data-toggle-mute aria-pressed="'+(!state.mute)+'"><span class="sw"></span><span class="nm">أصوات التطبيق</span></button>'+
-      '<button class="primary" style="width:100%;margin-top:10px" data-act="change-pin">غيّر الرقم السري</button>'+
-      '<button class="primary" style="width:100%;margin-top:9px;background:#8A94A6" data-act="pinning">إعدادات تثبيت الشاشة</button>'+
-      '<p class="note">لو الخروج من التطبيق سهل، افتح «تثبيت الشاشة / Screen pinning» من إعدادات الأمان في الموبايل وفعّله.</p></div>'+
+      '<button class="primary" style="width:100%;margin-top:10px" data-act="change-pin">غيّر الرقم السري</button></div>'+
+    '<div class="sgroup"><h4>التحديثات</h4>'+
+      '<div class="path"><span>النسخة الحالية</span><code>'+(B&&B.versionName?B.versionName():'—')+'</code></div>'+
+      '<div style="height:9px"></div>'+
+      '<input class="field" id="repoOwner" type="text" placeholder="اسم حسابك على جيت هب" value="'+state.repoOwner+'" style="direction:ltr">'+
+      '<div style="height:7px"></div>'+
+      '<input class="field" id="repoName" type="text" placeholder="اسم المستودع" value="'+state.repoName+'" style="direction:ltr">'+
+      '<button class="primary" style="width:100%;margin-top:10px" data-act="check-update">شوف لو فيه نسخة جديدة</button>'+
+      '<div id="updBox"></div>'+
+      '<p class="note">المستودع لازم يكون <b>Public</b> عشان التطبيق يعرف يسأل. لو خليته Private، الزرار هيفتحلك صفحة التحميل على طول وتشوف بنفسك.</p></div>'+
     '<button class="danger" data-act="exit-app">الخروج من التطبيق</button></div>';
   screenEl.appendChild(el);
 }
-function grabName(){var n=document.getElementById('childName'); if(n)state.childName=n.value.trim();}
+function grabName(){
+  var n=document.getElementById('childName'); if(n)state.childName=n.value.trim();
+  var o=document.getElementById('repoOwner'); if(o)state.repoOwner=o.value.trim();
+  var r=document.getElementById('repoName'); if(r)state.repoName=r.value.trim();
+}
+
+/* ---------------- التحديثات ---------------- */
+function updBox(html){ var b=document.getElementById('updBox'); if(b)b.innerHTML=html; }
+function checkUpdate(){
+  grabName(); savePrefs();
+  if(!state.repoOwner||!state.repoName){
+    updBox('<div class="warn" style="margin-top:10px">اكتب اسم حسابك واسم المستودع الأول.</div>');
+    return;
+  }
+  updBox('<p class="note" style="text-align:center">بيسأل جيت هب...</p>');
+  try{ B.checkUpdate(state.repoOwner,state.repoName); }
+  catch(e){ updBox('<div class="warn" style="margin-top:10px">مش قادر يوصل للإنترنت.</div>'); }
+}
+window.onRakanUpdate=function(payload){
+  var d; try{ d=JSON.parse(payload); }catch(e){ return; }
+  var open='<button class="primary" style="width:100%;margin-top:10px" data-act="open-releases" data-url="'+d.url+'">افتح صفحة التحميل</button>';
+  if(d.error==='private'){
+    updBox('<p class="note" style="margin-top:10px">المستودع Private فمش قادر يسأل. افتح الصفحة وشوف آخر نسخة بنفسك.</p>'+open);
+  } else if(d.error){
+    updBox('<div class="warn" style="margin-top:10px">مش قادر يوصل لجيت هب دلوقتي.</div>'+open);
+  } else if(d.latest>d.current){
+    updBox('<div class="warn" style="margin-top:10px;background:#E6F6EE;border-color:#A8DCC4;color:#15694C">'+
+      'فيه نسخة أحدث! النسخة <b>'+ar(d.latest)+'</b> وانت على <b>'+ar(d.current)+'</b>.</div>'+open);
+    tone(700,.2);
+  } else {
+    updBox('<p class="note" style="margin-top:10px;text-align:center;color:#1E8E68">انت على آخر نسخة ✓</p>');
+  }
+};
 function refreshSettings(){ grabName(); savePrefs(); closeLayer('settings'); openSettings(); render(); }
 
 /* ---------------- الأفاتار ---------------- */
@@ -701,6 +914,7 @@ function showTimeUp(hard){
     '<p class="s">'+(hard?'راكان تعب وهينام.<br>نكمّل بكرة إن شاء الله.':'مفيش فيديوهات تانية دلوقتي.')+'</p>'+
     (hard?'':'<button class="speak" style="background:#fff;color:var(--ink)" data-act="timeup-close">تمام</button>');
   screenEl.appendChild(el);
+  if(hard) sfx('sounds/app/timeup');
 }
 
 /* ---------------- التوجيه ---------------- */
@@ -720,15 +934,14 @@ function render(){
   renderStatus();
 }
 function openApp(id){
-  tone(520,.12,'triangle');
+  tone(520,.12,'triangle'); stopSfx();
   if(id==='photos'||id==='reels')loadMedia();
   ui.app=id; ui.picked=null; ui.surah=null; ui.reelIndex=0; render();
 }
 function goHome(){
-  stopGame(); closeLayer('reelLayer'); closeLayer('viewer'); closeLayer('timeup');
+  stopGame(); stopSfx(); closeLayer('reelLayer'); closeLayer('viewer'); closeLayer('timeup');
   ui.app=null; ui.picked=null; tone(380,.1,'triangle'); render();
 }
-/* زرار الرجوع في أندرويد */
 window.rakanBack=function(){
   if(document.getElementById('gate')){closeLayer('gate');return;}
   if(document.getElementById('studio')){closeLayer('studio');openSettings();return;}
@@ -737,7 +950,10 @@ window.rakanBack=function(){
   if(document.getElementById('glayer')){stopGame();ui.app='games';render();return;}
   if(ui.app)goHome();
 };
-window.onRakanPermissionResult=function(){ loadMedia(); if(document.getElementById('settings')){closeLayer('settings');openSettings();} };
+window.onRakanPermissionResult=function(){
+  loadMedia();
+  if(document.getElementById('settings')){closeLayer('settings');openSettings();}
+};
 
 /* ---------------- الأحداث ---------------- */
 screenEl.addEventListener('click',function(e){
@@ -751,24 +967,26 @@ screenEl.addEventListener('click',function(e){
   if(act==='game-exit'){stopGame();ui.app='games';render();return;}
   if(act==='win-again'){closeLayer('timeup');startGame(lastGame);return;}
   if(act==='win-home'){closeLayer('timeup');ui.app='games';render();return;}
-  if(act==='say'){tone(440,.3);return;}
 
   if(t.dataset.lang){ui.lang=t.dataset.lang;render();return;}
-  if(t.dataset.letter!==undefined){var s=ui.lang==='ar'?AR_L:EN_L;ui.picked=s[+t.dataset.letter];
-    tone(400+(+t.dataset.letter)*18,.26);render();return;}
-  if(t.dataset.num!==undefined){ui.picked=+t.dataset.num;tone(380+(+t.dataset.num)*40,.26);render();return;}
-  if(act==='again'){tone(520,.26);return;}
-  if(act==='back-grid'){ui.picked=null;render();return;}
+  if(t.dataset.letter!==undefined){
+    var s=ui.lang==='ar'?AR_L:EN_L, li=+t.dataset.letter;
+    ui.picked=s[li]; ui.pickedIndex=li; render(); sayLetter(li); return;}
+  if(t.dataset.num!==undefined){
+    var nn=+t.dataset.num; ui.picked=nn; ui.pickedIndex=nn; render(); sayNumber(nn); return;}
+  if(act==='again'){
+    if(ui.app==='letters')sayLetter(ui.pickedIndex); else sayNumber(ui.pickedIndex);
+    return;}
+  if(act==='back-grid'){stopSfx();ui.picked=null;render();return;}
 
   if(t.dataset.photo!==undefined){ui.photoIndex=+t.dataset.photo;tone(560,.1,'triangle');openViewer();return;}
   if(act==='ph-close'){closeLayer('viewer');return;}
-  if(act==='ph-next'||act==='ph-prev'){var d1=act==='ph-next'?1:-1;
-    ui.photoIndex=(ui.photoIndex+d1+photos.length)%photos.length;
-    closeLayer('viewer');openViewer();tone(500,.08,'triangle');return;}
+  if(act==='ph-next'){movePhoto(1);return;}
+  if(act==='ph-prev'){movePhoto(-1);return;}
 
   if(act==='reel-next'){nextReel(1);return;}
   if(act==='reel-prev'){nextReel(-1);return;}
-  if(act==='reel-play'){var v=document.getElementById('reelVideo'); if(v){v.play();} return;}
+  if(act==='reel-play'){var v=document.getElementById('reelVideo'); if(v){v.muted=false;v.play();} return;}
   if(act==='timeup-close'){closeLayer('timeup');goHome();return;}
 
   if(t.dataset.opt!==undefined){
@@ -778,12 +996,19 @@ screenEl.addEventListener('click',function(e){
     else{t.classList.add('no');tone(200,.2,'sawtooth');}
     return;}
 
+  if(act==='say-manner'){ sayManner(); return; }
+  if(act==='say-prayer'){ sayPrayer(); return; }
   if(act==='manner-next'||act==='manner-prev'){var m=act==='manner-next'?1:-1;
-    ui.mannerIndex=(ui.mannerIndex+m+MANNERS.length)%MANNERS.length;tone(460,.1,'triangle');render();return;}
+    ui.mannerIndex=(ui.mannerIndex+m+MANNERS.length)%MANNERS.length;render();sayManner();return;}
   if(act==='pray-next'||act==='pray-prev'){var p2=act==='pray-next'?1:-1;
-    ui.prayerStep=Math.min(PRAYER.length-1,Math.max(0,ui.prayerStep+p2));tone(460,.1,'triangle');render();return;}
-  if(t.dataset.surah!==undefined){ui.surah=+t.dataset.surah;tone(500,.14);render();return;}
-  if(act==='quran-back'){ui.surah=null;render();return;}
+    ui.prayerStep=Math.min(PRAYER.length-1,Math.max(0,ui.prayerStep+p2));render();sayPrayer();return;}
+  if(t.dataset.surah!==undefined){ui.surah=+t.dataset.surah;render();return;}
+  if(act==='quran-back'){stopSfx();ui.surah=null;render();return;}
+  if(act==='quran-toggle'){
+    var btn=document.getElementById('qBtn');
+    if(audio.paused){ audio.play(); if(btn)btn.innerHTML=iSpk()+' إيقاف مؤقت'; }
+    else { audio.pause(); if(btn)btn.innerHTML=iSpk()+' تشغيل'; }
+    return;}
 
   if(t.dataset.key){pinKey(t.dataset.key);return;}
   if(act==='settings-close'){grabName();savePrefs();closeLayer('settings');goHome();return;}
@@ -792,9 +1017,22 @@ screenEl.addEventListener('click',function(e){
   if(t.dataset.toggle){var id=t.dataset.toggle;
     if(!state.hidden[id]&&visibleApps().length<=2){tone(200,.18,'sawtooth');return;}
     state.hidden[id]=!state.hidden[id];refreshSettings();return;}
-  if(t.hasAttribute('data-toggle-mute')){state.mute=!state.mute;refreshSettings();return;}
+  if(t.hasAttribute('data-toggle-mute')){state.mute=!state.mute;stopSfx();refreshSettings();return;}
+  if(t.dataset.voice){
+    var parts=t.dataset.voice.split(':');
+    state.voices[parts[0]]=parts[1];
+    refreshSettings();
+    // سماعة سريعة عشان تتأكد إن الصوت المختار شغال
+    if(parts[0]==='letters')say('letters','letters/ar/1','أ ... أرنب','ar',function(){tone(520,.2);});
+    else if(parts[0]==='numbers')say('numbers','numbers/1','واحد','ar',function(){tone(520,.2);});
+    else if(parts[0]==='manners')say('manners','manners/1',MANNERS[0],'ar',function(){tone(520,.2);});
+    else say('prayer','prayer/1',PRAYER[0][0],'ar',function(){tone(520,.2);});
+    return;}
+  if(act==='check-update'){checkUpdate();return;}
+  if(act==='open-releases'){ if(B&&t.dataset.url){try{B.openUrl(t.dataset.url);}catch(e){}} return; }
   if(act==='rescan'){refreshSettings();tone(640,.16);return;}
   if(act==='ask-access'){ if(B){try{B.requestAllFilesAccess();}catch(e){}} return; }
+  if(act==='app-settings'){ if(B){try{B.openAppSettings();}catch(e){}} return; }
   if(act==='pinning'){ if(B){try{B.openPinningSettings();}catch(e){}} return; }
   if(act==='change-pin'){grabName();savePrefs();closeLayer('settings');openGate('set');return;}
   if(act==='open-studio'){grabName();savePrefs();closeLayer('settings');openStudio();return;}
@@ -808,7 +1046,7 @@ screenEl.addEventListener('click',function(e){
   if(t.dataset.dec){bumpAvatar(t.dataset.dec,-1);return;}
 
   if(act==='exit-app'){
-    grabName(); savePrefs();
+    grabName(); savePrefs(); stopSfx();
     if(B){try{B.exitApp();return;}catch(e){}}
     closeLayer('settings'); goHome(); return;}
 });
@@ -849,4 +1087,5 @@ document.addEventListener('gesturestart',function(e){e.preventDefault();});
 loadPrefs();
 loadMedia();
 render();
+setTimeout(function(){ sfx('sounds/app/welcome'); },500);
 })();

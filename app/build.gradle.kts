@@ -3,6 +3,10 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// GitHub Actions sets this on every build, so the app knows which build it is
+// and can tell when a newer one has been published.
+val buildNo: Int = (System.getenv("GITHUB_RUN_NUMBER") ?: "0").toIntOrNull() ?: 0
+
 android {
     namespace = "com.rakan.kids"
     compileSdk = 34
@@ -11,8 +15,13 @@ android {
         applicationId = "com.rakan.kids"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = buildNo + 1
+        versionName = "1.$buildNo"
+        buildConfigField("int", "BUILD_NUMBER", "$buildNo")
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {
@@ -22,7 +31,6 @@ android {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Signed with the debug key so the APK installs straight from GitHub.
             signingConfig = signingConfigs.getByName("debug")
         }
     }
