@@ -1,4 +1,4 @@
-name: Build Rakan APK
+name: بناء تطبيق راكان
 
 on:
   push:
