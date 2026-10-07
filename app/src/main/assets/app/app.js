@@ -352,7 +352,7 @@ function renderNumbers(){
 }
 
 /* ---------------- الصور ---------------- */
-function photoHtml(p){return p.kind==='file'?'<img src="'+p.url+'" alt="">':sceneSvg(p.seed);}
+function photoHtml(p,lazy){return p.kind==='file'?'<img src="'+p.url+'" alt=""'+(lazy?' loading="lazy"':'')+'>':sceneSvg(p.seed);}
 function emptyBox(what,path){
   return '<div class="empty"><span class="rk">'+rakan('happy')+'</span>'+
     '<b>مفيش '+what+' لسه</b>'+
@@ -360,28 +360,33 @@ function emptyBox(what,path){
 }
 function renderPhotos(){
   var body = photos.length
-    ? '<div class="photogrid">'+photos.map(function(p,i){return '<button class="ph" data-photo="'+i+'">'+photoHtml(p)+'</button>';}).join('')+'</div>'
+    ? '<div class="photogrid">'+photos.map(function(p,i){return '<button class="ph" data-photo="'+i+'">'+photoHtml(p,true)+'</button>';}).join('')+'</div>'
     : emptyBox('صور',folder('photos'));
   view.innerHTML=bar('الصور','<span class="pill">'+ar(photos.length)+'</span>')+body; homeDock();
 }
+/* معرض الصور بيفتح شريط واحد كامل فيه كل الصور جنب بعض، وبيتقلب بسحبة واحدة
+   زي قصص انستجرام — مفيش زراير ومفيش إعادة بناء للشاشة كل مرة. */
 function openViewer(){
   closeLayer('viewer');
-  var p=photos[ui.photoIndex];
   var el=document.createElement('div'); el.className='viewer'; el.id='viewer';
-  el.innerHTML='<div class="frame" id="photoFrame">'+photoHtml(p)+'</div><div class="bar">'+
-    '<button class="rbtn" data-act="ph-prev">'+iArrow('right')+'</button>'+
-    '<span class="count">'+ar(ui.photoIndex+1)+' / '+ar(photos.length)+'</span>'+
-    '<button class="rbtn" data-act="ph-next">'+iArrow('left')+'</button>'+
+  el.innerHTML='<div class="frame" id="photoFrame">'+
+      photos.map(function(p,i){return '<div class="pg">'+photoHtml(p,Math.abs(i-ui.photoIndex)>1)+'</div>';}).join('')+
+    '</div><div class="bar"><span class="count" id="phCount">'+ar(ui.photoIndex+1)+' / '+ar(photos.length)+'</span>'+
     '<button class="rbtn" data-act="ph-close">✕</button></div>';
   screenEl.appendChild(el);
   var frame=document.getElementById('photoFrame');
-  addSwipe(frame,{ left:function(){movePhoto(1);}, right:function(){movePhoto(-1);} });
-}
-function movePhoto(d){
-  if(!photos.length)return;
-  ui.photoIndex=(ui.photoIndex+d+photos.length)%photos.length;
-  tone(500,.08,'triangle');
-  openViewer();
+  var w=frame.clientWidth||1;
+  frame.scrollLeft=ui.photoIndex*w;
+  var t=null;
+  frame.addEventListener('scroll',function(){
+    if(t)clearTimeout(t);
+    t=setTimeout(function(){
+      var w2=frame.clientWidth||1;
+      var idx=Math.max(0,Math.min(photos.length-1,Math.round(frame.scrollLeft/w2)));
+      if(idx!==ui.photoIndex){ ui.photoIndex=idx; tone(500,.06,'triangle'); }
+      var c=document.getElementById('phCount'); if(c)c.textContent=ar(ui.photoIndex+1)+' / '+ar(photos.length);
+    },90);
+  },{passive:true});
 }
 
 /* ---------------- الفيديوهات ---------------- */
@@ -389,41 +394,66 @@ function renderReelsScreen(){
   if(!videos.length){
     view.innerHTML=bar('فيديوهات')+emptyBox('فيديوهات',folder('videos')); homeDock(); return;
   }
-  view.innerHTML=''; homeDock(); renderReels();
+  view.innerHTML=''; homeDock(); renderReelsLayer();
 }
-function renderReels(){
-  var v=videos[ui.reelIndex]; if(!v)return;
-  closeLayer('reelLayer');
-  var el=document.createElement('div'); el.className='reel'; el.id='reelLayer';
-  el.innerHTML='<div class="stageview" id="reelStage"><video id="reelVideo" src="'+v.url+'" playsinline autoplay></video>'+
-    '<button class="bigplay" data-act="reel-play" hidden id="reelPlay"><svg width="32" height="32" viewBox="0 0 24 24"><path d="M8 5.5l11 6.5-11 6.5v-13z" fill="#fff"/></svg></button>'+
-    '<div class="overlay"><div class="top"><span class="tag">'+ar(ui.reelIndex+1)+' من '+ar(videos.length)+'</span>'+
+function reelItemHtml(v,i){
+  return '<div class="reelItem" data-idx="'+i+'"><div class="stageview">'+
+    '<video class="reelVideo" data-src="'+v.url+'" playsinline></video>'+
+    '<button class="bigplay" data-act="reel-toggle" hidden><svg width="32" height="32" viewBox="0 0 24 24"><path d="M8 5.5l11 6.5-11 6.5v-13z" fill="#fff"/></svg></button>'+
+    '</div><div class="overlay"><div class="top">'+
     '<button class="rbtn" data-act="home" style="width:36px;height:36px">✕</button></div>'+
     '<div class="bottom"><div style="flex:1;min-width:0"><div class="title">'+v.title+'</div>'+
-    '<div class="progress"><i id="reelBar"></i></div></div>'+
-    '<div class="side"><button class="rbtn" data-act="reel-prev">'+iChev('up')+'</button>'+
-    '<button class="rbtn" data-act="reel-next">'+iChev('down')+'</button></div></div></div></div>';
-  screenEl.appendChild(el);
-
-  var vid=document.getElementById('reelVideo'), pbar=document.getElementById('reelBar'), pb=document.getElementById('reelPlay');
-  if(vid){
-    vid.muted=state.mute;
-    vid.addEventListener('timeupdate',function(){ if(pbar&&vid.duration)pbar.style.width=(vid.currentTime/vid.duration*100)+'%'; });
-    vid.addEventListener('ended',function(){ nextReel(1); });
-    vid.addEventListener('pause',function(){ if(pb)pb.hidden=false; });
-    vid.addEventListener('play',function(){ if(pb)pb.hidden=true; });
-    var pr=vid.play(); if(pr&&pr.catch)pr.catch(function(){ if(pb)pb.hidden=false; });
-  }
-  addSwipe(document.getElementById('reelStage'),{
-    up:function(){nextReel(1);}, down:function(){nextReel(-1);},
-    tap:function(){ var v2=document.getElementById('reelVideo'); if(!v2)return; if(v2.paused)v2.play(); else v2.pause(); }
-  });
+    '<div class="progress"><i class="reelBar"></i></div></div></div></div></div>';
 }
-function nextReel(d){
-  var nx=ui.reelIndex+d;
-  if(nx>=videos.length){ closeLayer('reelLayer'); showTimeUp(false); return; }
-  ui.reelIndex=(nx+videos.length)%videos.length;
-  renderReels(); tone(480,.08,'triangle');
+function reelEndHtml(){
+  return '<div class="reelItem"><div class="endcard"><span class="rk">'+rakan('happy')+'</span>'+
+    '<h3>شفت كل الفيديوهات! 🎉</h3><p>ارجع لفوق تتفرج تاني، أو ارجع للرئيسية</p>'+
+    '<button class="primary" data-act="home" style="padding:12px 26px">الرئيسية</button></div></div>';
+}
+var reelIO=null;
+function renderReelsLayer(){
+  closeLayer('reelLayer');
+  var el=document.createElement('div'); el.className='reel'; el.id='reelLayer';
+  el.innerHTML='<div class="reelScroll" id="reelScroll">'+videos.map(reelItemHtml).join('')+reelEndHtml()+'</div>';
+  screenEl.appendChild(el);
+  var scroller=document.getElementById('reelScroll');
+  var h=scroller.clientHeight||1;
+  scroller.scrollTop=ui.reelIndex*h;
+  var items=scroller.querySelectorAll('.reelItem');
+  items.forEach(function(item){ wireReelItem(item,scroller); });
+  if(reelIO){ try{reelIO.disconnect();}catch(e){} }
+  reelIO=new IntersectionObserver(function(entries){
+    entries.forEach(function(entry){
+      var item=entry.target, vid=item.querySelector('video.reelVideo');
+      if(entry.isIntersecting && entry.intersectionRatio>0.6){
+        if(item.dataset.idx!==undefined) ui.reelIndex=+item.dataset.idx;
+        if(vid){
+          if(!vid.getAttribute('src')){ var src=vid.dataset.src; if(src)vid.src=src; }
+          vid.muted=state.mute;
+          var pr=vid.play();
+          if(pr&&pr.catch)pr.catch(function(){ var pb=item.querySelector('.bigplay'); if(pb)pb.hidden=false; });
+        }
+      } else if(vid && !vid.paused){
+        vid.pause();
+      }
+    });
+  },{root:scroller,threshold:[0,.6,1]});
+  items.forEach(function(it){ reelIO.observe(it); });
+}
+function wireReelItem(item,scroller){
+  var vid=item.querySelector('video.reelVideo');
+  if(!vid)return;
+  var bar=item.querySelector('.reelBar'), pb=item.querySelector('.bigplay');
+  vid.addEventListener('timeupdate',function(){ if(bar&&vid.duration)bar.style.width=(vid.currentTime/vid.duration*100)+'%'; });
+  vid.addEventListener('pause',function(){ if(pb)pb.hidden=false; });
+  vid.addEventListener('play',function(){ if(pb)pb.hidden=true; });
+  vid.addEventListener('ended',function(){
+    var idx=+item.dataset.idx, h=scroller.clientHeight||1;
+    scroller.scrollTo({top:(idx+1)*h,behavior:'smooth'});
+  });
+  item.querySelector('.stageview').addEventListener('click',function(){
+    if(vid.paused){ vid.play(); } else { vid.pause(); }
+  });
 }
 
 /* ---------------- بطاقات ---------------- */
@@ -962,7 +992,9 @@ function openApp(id){
   ui.app=id; ui.picked=null; ui.surah=null; ui.reelIndex=0; render();
 }
 function goHome(){
-  stopGame(); stopSfx(); closeLayer('reelLayer'); closeLayer('viewer'); closeLayer('timeup');
+  stopGame(); stopSfx();
+  if(reelIO){ try{reelIO.disconnect();}catch(e){} reelIO=null; }
+  closeLayer('reelLayer'); closeLayer('viewer'); closeLayer('timeup');
   ui.app=null; ui.picked=null; tone(380,.1,'triangle'); render();
 }
 window.rakanBack=function(){
@@ -1004,12 +1036,12 @@ screenEl.addEventListener('click',function(e){
 
   if(t.dataset.photo!==undefined){ui.photoIndex=+t.dataset.photo;tone(560,.1,'triangle');openViewer();return;}
   if(act==='ph-close'){closeLayer('viewer');return;}
-  if(act==='ph-next'){movePhoto(1);return;}
-  if(act==='ph-prev'){movePhoto(-1);return;}
 
-  if(act==='reel-next'){nextReel(1);return;}
-  if(act==='reel-prev'){nextReel(-1);return;}
-  if(act==='reel-play'){var v=document.getElementById('reelVideo'); if(v){v.muted=false;v.play();} return;}
+  if(act==='reel-toggle'){
+    var item=t.closest('.reelItem'), v=item&&item.querySelector('video.reelVideo');
+    if(v){ v.muted=false; if(v.paused)v.play(); else v.pause(); }
+    return;
+  }
   if(act==='timeup-close'){closeLayer('timeup');goHome();return;}
 
   if(t.dataset.opt!==undefined){
