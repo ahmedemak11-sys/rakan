@@ -220,12 +220,14 @@ var GAMES=[
   {id:'fruit',name:'اقطف الفاكهة',color:'var(--mint)'},
   {id:'car',name:'العربية',color:'var(--melon)'},
   {id:'shapes',name:'طابق الأشكال',color:'var(--grape)'},
-  {id:'memory',name:'الذاكرة',color:'var(--teal)',minAge:'4-5'}
+  {id:'order',name:'رتب الأرقام',color:'var(--sun)'},
+  {id:'memory',name:'الذاكرة',color:'var(--teal)',minAge:'4-5'},
+  {id:'pattern',name:'تابع النمط',color:'var(--sky)',minAge:'4-5'}
 ];
 var CFG={
-  '2-3':{bSpeed:.45,bR:38,bTarget:8,fSpeed:1.1,fRocks:false,fTarget:8,cSpeed:1.4,cTarget:6,shapes:3,pairs:0},
-  '4-5':{bSpeed:.75,bR:31,bTarget:12,fSpeed:1.7,fRocks:true,fTarget:12,cSpeed:2.1,cTarget:10,shapes:5,pairs:4},
-  '6+' :{bSpeed:1.1,bR:25,bTarget:16,fSpeed:2.4,fRocks:true,fTarget:16,cSpeed:3,cTarget:14,shapes:5,pairs:6}
+  '2-3':{bSpeed:.45,bR:38,bTarget:8,fSpeed:1.1,fRocks:false,fTarget:8,cSpeed:1.4,cTarget:6,shapes:3,pairs:0,omax:6,patTarget:5},
+  '4-5':{bSpeed:.75,bR:31,bTarget:12,fSpeed:1.7,fRocks:true,fTarget:12,cSpeed:2.1,cTarget:10,shapes:5,pairs:4,omax:9,patTarget:7},
+  '6+' :{bSpeed:1.1,bR:25,bTarget:16,fSpeed:2.4,fRocks:true,fTarget:16,cSpeed:3,cTarget:14,shapes:5,pairs:6,omax:14,patTarget:10}
 };
 function cfg(){return CFG[state.age]||CFG['4-5'];}
 
@@ -525,7 +527,9 @@ function renderGamesHub(){
     fruit:'<svg width="44" height="44" viewBox="0 0 48 48"><circle cx="24" cy="22" r="12" fill="#fff" opacity=".95"/><path d="M24 10V6" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><path d="M10 34h28l-4 8H14z" fill="#fff" opacity=".75"/></svg>',
     car:'<svg width="44" height="44" viewBox="0 0 48 48"><path d="M9 28l3-8a4 4 0 0 1 4-3h16a4 4 0 0 1 4 3l3 8v6H9z" fill="#fff" opacity=".95"/><circle cx="16" cy="35" r="4" fill="#fff"/><circle cx="32" cy="35" r="4" fill="#fff"/></svg>',
     shapes:iPuzzle(44),
-    memory:'<svg width="44" height="44" viewBox="0 0 48 48"><rect x="7" y="10" width="15" height="21" rx="4" fill="#fff" opacity=".95"/><rect x="26" y="17" width="15" height="21" rx="4" fill="#fff" opacity=".75"/></svg>'};
+    order:'<svg width="44" height="44" viewBox="0 0 48 48"><circle cx="11" cy="35" r="7.5" fill="#fff" opacity=".95"/><circle cx="24" cy="22" r="7.5" fill="#fff" opacity=".82"/><circle cx="37" cy="9" r="7.5" fill="#fff" opacity=".95"/></svg>',
+    memory:'<svg width="44" height="44" viewBox="0 0 48 48"><rect x="7" y="10" width="15" height="21" rx="4" fill="#fff" opacity=".95"/><rect x="26" y="17" width="15" height="21" rx="4" fill="#fff" opacity=".75"/></svg>',
+    pattern:'<svg width="44" height="44" viewBox="0 0 48 48"><rect x="6" y="6" width="16" height="16" rx="5" fill="#fff" opacity=".95"/><rect x="26" y="6" width="16" height="16" rx="5" fill="#fff" opacity=".65"/><rect x="6" y="26" width="16" height="16" rx="5" fill="#fff" opacity=".65"/><rect x="26" y="26" width="16" height="16" rx="5" fill="#fff" opacity=".95"/></svg>'};
   view.innerHTML=bar('ألعاب','<span class="pill">'+lvl+'</span>')+
     '<div class="gamegrid">'+availableGames().map(function(g){
       return '<button class="gtile" data-game="'+g.id+'" style="background:'+g.color+'">'+art[g.id]+g.name+'</button>';}).join('')+'</div>';
@@ -728,13 +732,77 @@ function startMemory(){
     }
   });
 }
+/* رتب الأرقام — الأرقام متبعترة على الشاشة، والطفل يدوس عليها بالترتيب
+   من ١ لحد آخر رقم. بتنمي التعرف على الأرقام والترتيب. */
+function startOrder(){
+  lastGame='order'; var n=cfg().omax||8; var el=gameLayer('رتب الأرقام');
+  var wrap=document.createElement('div'); wrap.className='ordergrid'; el.appendChild(wrap);
+  var cols=['var(--sky)','var(--melon)','var(--grape)','var(--mint)','var(--sun)','var(--rose)','var(--teal)','var(--olive)'];
+  var nums=[]; for(var i=1;i<=n;i++)nums.push(i);
+  nums.sort(function(){return Math.random()-.5;});
+  wrap.innerHTML=nums.map(function(v){return '<button class="obub" data-n="'+v+'" style="background:'+cols[(v-1)%cols.length]+'">'+ar(v)+'</button>';}).join('');
+  var next=1; setScore(0);
+  wrap.addEventListener('click',function(e){
+    var b=e.target.closest('.obub'); if(!b)return;
+    var v=+b.dataset.n;
+    if(v===next){
+      b.classList.add('done'); tone(520+next*26,.12,'triangle'); next++; setScore(next-1);
+      if(next>n){ setTimeout(winScreen,320); }
+    } else {
+      b.classList.remove('wrong'); void b.offsetWidth; b.classList.add('wrong'); tone(170,.16,'sawtooth');
+    }
+  });
+}
+
+/* تابع النمط — زي لعبة سايمون: التطبيق يضوي ترتيب من الألوان،
+   والطفل يكرره. كل جولة بتزود رقم. بتنمي الذاكرة والتركيز. */
+function startPattern(){
+  lastGame='pattern'; var el=gameLayer('تابع النمط');
+  var wrap=document.createElement('div'); wrap.className='padgrid'; el.appendChild(wrap);
+  var pads=[{c:'var(--melon)',f:392},{c:'var(--mint)',f:330},{c:'var(--sky)',f:440},{c:'var(--sun)',f:523}];
+  wrap.innerHTML=pads.map(function(p,i){return '<button class="pad" data-pad="'+i+'" style="background:'+p.c+'"></button>';}).join('');
+  var seq=[], input=0, round=0, busy=true, target=cfg().patTarget||8; setScore(0);
+  function litPad(i,dur){
+    var b=wrap.querySelector('[data-pad="'+i+'"]'); if(!b)return;
+    b.classList.add('lit'); tone(pads[i].f,.22,'sine');
+    setTimeout(function(){b.classList.remove('lit');},dur||380);
+  }
+  function playSeq(){
+    busy=true; input=0;
+    var i=0;
+    function step(){
+      if(i>=seq.length){ busy=false; return; }
+      litPad(seq[i],420); i++; setTimeout(step,560);
+    }
+    setTimeout(step,500);
+  }
+  function nextRound(){ seq.push((Math.random()*4)|0); round++; setScore(round-1); playSeq(); }
+  wrap.addEventListener('click',function(e){
+    var b=e.target.closest('.pad'); if(!b||busy)return;
+    var i=+b.dataset.pad; litPad(i,220);
+    if(seq[input]===i){
+      input++;
+      if(input===seq.length){
+        if(round>=target){ setTimeout(winScreen,300); return; }
+        setTimeout(nextRound,500);
+      }
+    } else {
+      tone(160,.25,'sawtooth');
+      setTimeout(function(){ round=0; seq=[]; input=0; setScore(0); nextRound(); },650);
+    }
+  });
+  nextRound();
+}
+
 function startGame(id){
   stopGame(); stopSfx(); tone(560,.12,'triangle');
   if(id==='balloons')startBalloons();
   else if(id==='fruit')startFruit();
   else if(id==='car')startCar();
   else if(id==='shapes')startShapes();
+  else if(id==='order')startOrder();
   else if(id==='memory')startMemory();
+  else if(id==='pattern')startPattern();
 }
 
 /* ---------------- بوابة ولي الأمر ---------------- */
