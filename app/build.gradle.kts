@@ -19,6 +19,20 @@ android {
         versionName = "1.$buildNo"
     }
 
+    // A fixed debug keystore committed to the repo, so every build on every
+    // machine (GitHub Actions included) signs with the SAME certificate.
+    // Without this, Gradle's auto-generated debug key differs on every CI
+    // run, and Android refuses to install an update over the old app
+    // ("App not installed — conflicts with an existing package").
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
