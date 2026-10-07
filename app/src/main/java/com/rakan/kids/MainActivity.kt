@@ -23,6 +23,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -201,6 +202,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         hideSystemBars()
+        if (hasMediaAccess()) ensureFolders()
         if (leavingForSettings) {
             leavingForSettings = false
             web.postDelayed({
@@ -459,7 +461,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
-        fun hasAccess(): Boolean = hasMediaAccess()
+        fun hasAccess(): Boolean {
+            val ok = hasMediaAccess()
+            if (ok) ensureFolders()
+            return ok
+        }
 
         @JavascriptInterface
         fun requestAccess() {
@@ -499,8 +505,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
-        fun makeFolders() {
-            runOnUiThread { ensureFolders() }
+        fun makeFolders(): Boolean {
+            ensureFolders()
+            return videosDir.isDirectory && photosDir.isDirectory
         }
 
         @JavascriptInterface
@@ -643,6 +650,112 @@ class MainActivity : AppCompatActivity() {
                 stopPinning()
                 finishAndRemoveTask()
             }
+        }
+
+        /**
+         * Downloads rakan.apk from the newest GitHub release and opens the system
+         * installer. Android always asks the parent to confirm the install.
+         */
+        @JavascriptInterface
+        fun installUpdate(owner: String, repo: String) {
+            val thread = Thread {
+                var apk: File? = null
+                try {
+                    val dir = File(cacheDir, "updates")
+                    dir.mkdirs()
+                    val target = File(dir, "rakan.apk")
+                    val api = URL("https://api.github.com/repos/" + owner + "/" + repo + "/releases/latest")
+                    val c1 = api.openConnection() as HttpURLConnection
+                    c1.connectTimeout = 10000
+                    c1.readTimeout = 10000
+                    c1.setRequestProperty("Accept", "application/vnd.github+json")
+                    c1.setRequestProperty("User-Agent", "Rakan")
+                    var assetUrl = ""
+                    if (c1.responseCode == 200) {
+                        val body = c1.inputStream.bufferedReader().use { it.readText() }
+                        val assets = JSONObject(body).optJSONArray("assets")
+                        if (assets != null) {
+                            for (i in 0 until assets.length()) {
+                                val a = assets.getJSONObject(i)
+                                if (a.optString("name") == "rakan.apk") {
+                                    assetUrl = a.optString("browser_download_url")
+                                }
+                            }
+                        }
+                    }
+                    c1.disconnect()
+                    if (assetUrl.isEmpty()) throw Exception("no asset")
+
+                    val c2 = URL(assetUrl).openConnection() as HttpURLConnection
+                    c2.connectTimeout = 15000
+                    c2.readTimeout = 30000
+                    c2.instanceFollowRedirects = true
+                    c2.setRequestProperty("User-Agent", "Rakan")
+                    if (c2.responseCode != 200) throw Exception("download")
+                    val total = c2.contentLength
+                    var done = 0L
+                    var lastPct = -1
+                    c2.inputStream.use { input ->
+                        target.outputStream().use { output ->
+                            val buf = ByteArray(32768)
+                            while (true) {
+                                val n = input.read(buf)
+                                if (n < 0) break
+                                output.write(buf, 0, n)
+                                done += n
+                                if (total > 0) {
+                                    val pct = (done * 100 / total).toInt()
+                                    if (pct != lastPct && pct % 5 == 0) {
+                                        lastPct = pct
+                                        sendDownload("progress", pct)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    c2.disconnect()
+                    apk = target
+                } catch (e: Exception) {
+                    sendDownload("error", 0)
+                }
+                val file = apk
+                if (file != null) {
+                    runOnUiThread { launchInstaller(file) }
+                }
+            }
+            thread.start()
+        }
+    }
+
+    private fun sendDownload(state: String, pct: Int) {
+        val o = JSONObject()
+        o.put("state", state)
+        o.put("pct", pct)
+        val quoted = JSONObject.quote(o.toString())
+        runOnUiThread {
+            web.evaluateJavascript(
+                "window.onRakanDownload && window.onRakanDownload(" + quoted + ")", null
+            )
+        }
+    }
+
+    private fun launchInstaller(file: File) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            sendDownload("permission", 0)
+            val i = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+            i.data = Uri.parse("package:" + packageName)
+            openExternal(i)
+            return
+        }
+        try {
+            val uri = FileProvider.getUriForFile(this, packageName + ".fileprovider", file)
+            val i = Intent(Intent.ACTION_VIEW)
+            i.setDataAndType(uri, "application/vnd.android.package-archive")
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            sendDownload("installing", 100)
+            openExternal(i)
+        } catch (e: Exception) {
+            sendDownload("error", 0)
         }
     }
 }

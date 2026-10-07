@@ -235,7 +235,7 @@ var state={
   hidden:{}, hasAvatar:false, avatar:{face:0,skin:1,hair:0,hairColor:1,eyes:0,shirt:0},
   hintShown:false,
   voices:{letters:'app',numbers:'app',manners:'app',prayer:'app'},
-  repoOwner:'', repoName:''
+  repoOwner:'ahmedemak11-sys', repoName:'rakan'
 };
 var VOICES=[{id:'app',name:'التطبيق'},{id:'mom',name:'ماما'},{id:'dad',name:'بابا'}];
 function voiceName(id){for(var i=0;i<VOICES.length;i++)if(VOICES[i].id===id)return VOICES[i].name;return 'التطبيق';}
@@ -254,6 +254,8 @@ function loadPrefs(){
   try{
     var raw=B.getPrefs();
     if(raw){var p=JSON.parse(raw); for(var k in p){if(p[k]!==undefined)state[k]=p[k];}}
+    if(!state.repoOwner)state.repoOwner='ahmedemak11-sys';
+    if(!state.repoName)state.repoName='rakan';
   }catch(e){}
 }
 function loadMedia(){
@@ -815,6 +817,7 @@ function openSettings(){
       '<p class="note">المستودع لازم يكون <b>Public</b> عشان التطبيق يعرف يسأل. لو خليته Private، الزرار هيفتحلك صفحة التحميل على طول وتشوف بنفسك.</p></div>'+
     '<button class="danger" data-act="exit-app">الخروج من التطبيق</button></div>';
   screenEl.appendChild(el);
+  if(upd)updBox(updHtml(upd));
 }
 function grabName(){
   var n=document.getElementById('childName'); if(n)state.childName=n.value.trim();
@@ -834,20 +837,40 @@ function checkUpdate(){
   try{ B.checkUpdate(state.repoOwner,state.repoName); }
   catch(e){ updBox('<div class="warn" style="margin-top:10px">مش قادر يوصل للإنترنت.</div>'); }
 }
-window.onRakanUpdate=function(payload){
-  var d; try{ d=JSON.parse(payload); }catch(e){ return; }
+var upd=null;
+function updHtml(d){
   var open='<button class="primary" style="width:100%;margin-top:10px" data-act="open-releases" data-url="'+d.url+'">افتح صفحة التحميل</button>';
   if(d.error==='private'){
-    updBox('<p class="note" style="margin-top:10px">المستودع Private فمش قادر يسأل. افتح الصفحة وشوف آخر نسخة بنفسك.</p>'+open);
+    return '<p class="note" style="margin-top:10px">المستودع Private فمش قادر يسأل. افتح الصفحة وشوف آخر نسخة بنفسك.</p>'+open;
   } else if(d.error){
-    updBox('<div class="warn" style="margin-top:10px">مش قادر يوصل لجيت هب دلوقتي.</div>'+open);
+    return '<div class="warn" style="margin-top:10px">مش قادر يوصل لجيت هب دلوقتي.</div>'+open;
   } else if(d.latest>d.current){
-    updBox('<div class="warn" style="margin-top:10px;background:#E6F6EE;border-color:#A8DCC4;color:#15694C">'+
-      'فيه نسخة أحدث! النسخة <b>'+ar(d.latest)+'</b> وانت على <b>'+ar(d.current)+'</b>.</div>'+open);
-    tone(700,.2);
-  } else {
-    updBox('<p class="note" style="margin-top:10px;text-align:center;color:#1E8E68">انت على آخر نسخة ✓</p>');
+    return '<div class="warn" style="margin-top:10px;background:#E6F6EE;border-color:#A8DCC4;color:#15694C">'+
+      'فيه نسخة أحدث! النسخة <b>'+ar(d.latest)+'</b> وانت على <b>'+ar(d.current)+'</b>.</div>'+
+      '<button class="primary" style="width:100%;margin-top:10px;background:var(--mint)" data-act="install-update">حدّث الآن</button>'+
+      '<div id="dlBox"></div>';
   }
+  return '<p class="note" style="margin-top:10px;text-align:center;color:#1E8E68">انت على آخر نسخة ✓</p>';
+}
+window.onRakanUpdate=function(payload){
+  var d; try{ d=JSON.parse(payload); }catch(e){ return; }
+  upd=d;
+  var newer=!d.error && d.latest>d.current;
+  if(newer){
+    tone(700,.2);
+    if(!ui.app && !document.getElementById('settings') && !document.getElementById('gate') && hintSlot){
+      hintSlot.innerHTML='<div class="hint" style="background:#E6F6EE;color:#15694C">فيه تحديث جديد للتطبيق — اضغط مطوّل على «راكان» وادخل الإعدادات وحدّث</div>';
+    }
+  }
+  if(document.getElementById('updBox'))updBox(updHtml(d));
+};
+window.onRakanDownload=function(msg){
+  var b=document.getElementById('dlBox'); if(!b)return;
+  var d; try{ d=JSON.parse(msg); }catch(e){ return; }
+  if(d.state==='progress'){ b.innerHTML='<p class="note" style="text-align:center;margin-top:8px">بينزّل... '+ar(d.pct)+'٪</p>'; }
+  else if(d.state==='permission'){ b.innerHTML='<div class="warn" style="margin-top:8px">فعّل «السماح بتثبيت التطبيقات» لراكان من الصفحة اللي اتفتحت، وارجع واضغط «حدّث الآن» تاني.</div>'; }
+  else if(d.state==='installing'){ b.innerHTML='<p class="note" style="text-align:center;margin-top:8px;color:#1E8E68">اضغط Install في الشاشة اللي ظهرت ✓</p>'; }
+  else { b.innerHTML='<div class="warn" style="margin-top:8px">التنزيل فشل. جرّب تاني أو افتح صفحة التحميل.</div>'; }
 };
 function refreshSettings(){ grabName(); savePrefs(); closeLayer('settings'); openSettings(); render(); }
 
@@ -1029,8 +1052,9 @@ screenEl.addEventListener('click',function(e){
     else say('prayer','prayer/1',PRAYER[0][0],'ar',function(){tone(520,.2);});
     return;}
   if(act==='check-update'){checkUpdate();return;}
+  if(act==='install-update'){ var db=document.getElementById('dlBox'); if(db)db.innerHTML='<p class="note" style="text-align:center;margin-top:8px">بيجهّز التنزيل...</p>'; if(B){try{B.installUpdate(state.repoOwner,state.repoName);}catch(e){}} return; }
   if(act==='open-releases'){ if(B&&t.dataset.url){try{B.openUrl(t.dataset.url);}catch(e){}} return; }
-  if(act==='rescan'){refreshSettings();tone(640,.16);return;}
+  if(act==='rescan'){ if(B){try{B.makeFolders();}catch(e){}} loadMedia(); refreshSettings();tone(640,.16);return;}
   if(act==='ask-access'){ if(B){try{B.requestAllFilesAccess();}catch(e){}} return; }
   if(act==='app-settings'){ if(B){try{B.openAppSettings();}catch(e){}} return; }
   if(act==='pinning'){ if(B){try{B.openPinningSettings();}catch(e){}} return; }
@@ -1088,4 +1112,5 @@ loadPrefs();
 loadMedia();
 render();
 setTimeout(function(){ sfx('sounds/app/welcome'); },500);
+setTimeout(function(){ if(B&&state.repoOwner&&state.repoName){try{B.checkUpdate(state.repoOwner,state.repoName);}catch(e){}} },2500);
 })();
